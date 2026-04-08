@@ -35,10 +35,16 @@ export async function createContainer(
       Memory: 2 * 1024 * 1024 * 1024, // 2GB
       NanoCpus: 2_000_000_000, // 2 CPUs
       NetworkMode: 'bridge',
-    },
+      // Security hardening
+      ReadonlyRootfs: false,
+      CapDrop: ['ALL'],
+      CapAdd: ['CHOWN', 'DAC_OVERRIDE', 'FOWNER', 'SETGID', 'SETUID'],
+      SecurityOpt: ['no-new-privileges'],
+      Tmpfs: { '/tmp': 'rw,noexec,nosuid,size=256m' },
+    } as Dockerode.HostConfig,
   })
 
-  return container
+  return container as unknown as Dockerode.Container
 }
 
 export async function startContainer(container: Dockerode.Container): Promise<void> {

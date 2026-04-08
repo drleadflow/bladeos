@@ -1,0 +1,18 @@
+[
+  {
+    "id": "new-lead",
+    "name": "New Lead Received",
+    "path": "/webhooks/new-lead",
+    "employeeId": "closer",
+    "action": "A new lead just came in. Research them and draft a personalized outreach message.",
+    "enabled": true
+  },
+  {
+    "id": "support-ticket",
+    "name": "Support Ticket Created",
+    "path": "/webhooks/support-ticket",
+    "employeeId": "support-rep",
+    "action": "A new support ticket was submitted. Draft a response and check if this is an escalation.",
+    "enabled": true
+  }
+]

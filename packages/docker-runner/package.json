@@ -18,7 +18,6 @@
   },
   "dependencies": {
     "@blade/shared": "*",
-    "@blade/core": "*",
     "dockerode": "^4.0.0",
     "@octokit/rest": "^21.1.0"
   },

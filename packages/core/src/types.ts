@@ -68,6 +68,7 @@ export interface ExecutionContext {
   modelId: string
   maxIterations: number
   costBudget: number
+  toolScopeId?: string
 }
 
 // ============================================================
@@ -130,9 +131,12 @@ export interface AgentLoopOptions {
   context: ExecutionContext
   maxIterations?: number
   costBudget?: number
+  streaming?: boolean
   onTurn?: (turn: AgentTurn) => void
   onToolCall?: (result: ToolCallResult) => void
   onTextDelta?: (text: string) => void
+  onComplete?: (result: AgentLoopResult) => void
+  onError?: (error: Error, context: string) => void
 }
 
 export interface AgentLoopResult {
@@ -147,7 +151,7 @@ export interface AgentLoopResult {
 // MODEL PROVIDER
 // ============================================================
 
-export type ModelProvider = 'anthropic' | 'openai' | 'openrouter'
+export type ModelProvider = 'anthropic' | 'openai' | 'openrouter' | 'claude-cli'
 
 export interface ModelConfig {
   provider: ModelProvider

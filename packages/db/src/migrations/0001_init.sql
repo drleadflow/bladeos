@@ -143,3 +143,33 @@ CREATE TABLE IF NOT EXISTS cost_entries (
 CREATE INDEX IF NOT EXISTS idx_cost_job ON cost_entries(job_id);
 CREATE INDEX IF NOT EXISTS idx_cost_conv ON cost_entries(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_cost_date ON cost_entries(created_at);
+
+-- Employees (AI team members)
+CREATE TABLE IF NOT EXISTS employees (
+  id TEXT PRIMARY KEY,
+  slug TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,
+  title TEXT NOT NULL,
+  pillar TEXT NOT NULL CHECK(pillar IN ('business','health','wealth','relationships','spirituality')),
+  description TEXT NOT NULL,
+  icon TEXT NOT NULL DEFAULT '',
+  active INTEGER NOT NULL DEFAULT 0,
+  archetype TEXT CHECK(archetype IN ('coach','operator')),
+  onboarding_answers_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_employees_active ON employees(active);
+CREATE INDEX IF NOT EXISTS idx_employees_pillar ON employees(pillar);
+
+-- Notifications
+CREATE TABLE IF NOT EXISTS notifications (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  message TEXT NOT NULL,
+  type TEXT NOT NULL DEFAULT 'info' CHECK(type IN ('info','success','warning','error')),
+  read INTEGER NOT NULL DEFAULT 0,
+  employee_slug TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_notifications_read ON notifications(read);

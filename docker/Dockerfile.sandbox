@@ -1,5 +1,25 @@
 FROM node:20-slim
-RUN apt-get update && apt-get install -y git curl python3 && rm -rf /var/lib/apt/lists/*
-RUN npm install -g typescript tsx
+
+# Install system tools
+RUN apt-get update && apt-get install -y \
+    git \
+    curl \
+    python3 \
+    python3-pip \
+    jq \
+    ripgrep \
+    tree \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install global Node.js tools
+RUN npm install -g typescript tsx eslint prettier
+
+# Configure git for commits
+RUN git config --global user.email "blade@blade-agent.dev" \
+    && git config --global user.name "Blade Super Agent" \
+    && git config --global init.defaultBranch main
+
 WORKDIR /workspace
+
+# Keep container alive for exec commands
 CMD ["sleep", "infinity"]

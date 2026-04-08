@@ -1,0 +1,5 @@
+export { runEvolutionCycle } from './self-evolve.js'
+export type { EvolutionEvent } from './self-evolve.js'
+export { optimizeEmployeePrompt } from './prompt-optimizer.js'
+export { generateUsageReport } from './competitive-moat.js'
+export type { UsageReport } from './competitive-moat.js'

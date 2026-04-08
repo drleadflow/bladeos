@@ -36,6 +36,27 @@ export async function createPullRequest(params: {
   }
 }
 
+export async function commentOnPR(params: {
+  owner: string
+  repo: string
+  prNumber: number
+  body: string
+  githubToken: string
+}): Promise<void> {
+  const octokit = new Octokit({ auth: params.githubToken })
+
+  logger.info('GitHub', `Commenting on PR #${params.prNumber}`)
+
+  await octokit.issues.createComment({
+    owner: params.owner,
+    repo: params.repo,
+    issue_number: params.prNumber,
+    body: params.body,
+  })
+
+  logger.info('GitHub', `Comment posted on PR #${params.prNumber}`)
+}
+
 /**
  * Parse a GitHub repo URL into owner and repo name.
  * Supports: https://github.com/owner/repo, git@github.com:owner/repo.git

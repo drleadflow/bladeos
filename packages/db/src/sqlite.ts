@@ -26,22 +26,27 @@ export function getDb(dbPath?: string): Database.Database {
 export function initializeDb(dbPath?: string): Database.Database {
   const db = getDb(dbPath)
 
-  const migrationPath = join(__dirname, '..', 'src', 'migrations', '0001_init.sql')
+  const migrationFiles = ['0001_init.sql', '0002_employees.sql', '0003_documents.sql', '0004_gamification.sql', '0005_evolution.sql']
 
-  let sql: string
-  if (existsSync(migrationPath)) {
-    sql = readFileSync(migrationPath, 'utf-8')
-  } else {
-    // Fallback: try relative to dist
-    const distPath = join(__dirname, 'migrations', '0001_init.sql')
-    if (existsSync(distPath)) {
-      sql = readFileSync(distPath, 'utf-8')
+  for (const file of migrationFiles) {
+    const migrationPath = join(__dirname, '..', 'src', 'migrations', file)
+
+    let sql: string
+    if (existsSync(migrationPath)) {
+      sql = readFileSync(migrationPath, 'utf-8')
     } else {
-      throw new Error(`Migration file not found at ${migrationPath} or ${distPath}`)
+      // Fallback: try relative to dist
+      const distPath = join(__dirname, 'migrations', file)
+      if (existsSync(distPath)) {
+        sql = readFileSync(distPath, 'utf-8')
+      } else {
+        throw new Error(`Migration file not found at ${migrationPath} or ${distPath}`)
+      }
     }
+
+    db.exec(sql)
   }
 
-  db.exec(sql)
   return db
 }
 

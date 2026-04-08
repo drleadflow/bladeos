@@ -41,14 +41,48 @@ function parseSkillYaml(filePath: string): Skill | undefined {
   }
 }
 
-export function loadSkillsFromDir(dir: string): Skill[] {
-  const skills: Skill[] = []
+/**
+ * Parse a skill YAML returning only name + description (systemPrompt set to empty string).
+ * This saves context window by not loading all skill prompts upfront.
+ */
+function parseSkillYamlLite(filePath: string): Skill | undefined {
+  try {
+    const raw = readFileSync(filePath, 'utf-8')
+    const parsed = yaml.load(raw) as SkillYaml
+
+    if (!parsed.name || !parsed.description || !parsed.system_prompt) {
+      return undefined
+    }
+
+    const now = new Date().toISOString()
+
+    return {
+      id: parsed.name,
+      name: parsed.name,
+      description: parsed.description,
+      version: parsed.version ?? 1,
+      systemPrompt: '',
+      tools: parsed.tools ?? [],
+      examples: [],
+      successRate: 0,
+      totalUses: 0,
+      source: 'builtin',
+      createdAt: now,
+      updatedAt: now,
+    }
+  } catch {
+    return undefined
+  }
+}
+
+function findSkillYamlPaths(dir: string): string[] {
+  const paths: string[] = []
 
   let entries: string[]
   try {
     entries = readdirSync(dir)
   } catch {
-    return skills
+    return paths
   }
 
   for (const entry of entries) {
@@ -58,29 +92,64 @@ export function loadSkillsFromDir(dir: string): Skill[] {
       const stat = statSync(entryPath)
 
       if (stat.isDirectory()) {
-        // Look for skill.yaml inside the directory
         const yamlPath = join(entryPath, 'skill.yaml')
         try {
           statSync(yamlPath)
-          const skill = parseSkillYaml(yamlPath)
-          if (skill) {
-            skills.push(skill)
-          }
+          paths.push(yamlPath)
         } catch {
           // No skill.yaml in this directory, skip
         }
       } else if (entry.endsWith('.yaml') || entry.endsWith('.yml')) {
-        const skill = parseSkillYaml(entryPath)
-        if (skill) {
-          skills.push(skill)
-        }
+        paths.push(entryPath)
       }
     } catch {
       // Skip entries we can't stat
     }
   }
 
+  return paths
+}
+
+/**
+ * Load skills from a directory with ONLY name + description (systemPrompt set to empty string).
+ * Use loadFullSkill() or getSkillPrompt() to load the full system prompt on-demand.
+ */
+export function loadSkillsFromDir(dir: string): Skill[] {
+  const skills: Skill[] = []
+  const paths = findSkillYamlPaths(dir)
+
+  for (const yamlPath of paths) {
+    const skill = parseSkillYamlLite(yamlPath)
+    if (skill) {
+      skills.push(skill)
+    }
+  }
+
   return skills
+}
+
+/**
+ * Load a full skill (including system prompt) from a YAML file path.
+ */
+export function loadFullSkill(skillPath: string): Skill | undefined {
+  return parseSkillYaml(skillPath)
+}
+
+/**
+ * Load the full system prompt for a skill by name from the given skills directory.
+ * Returns null if the skill is not found.
+ */
+export function getSkillPrompt(name: string, skillsDir: string): string | null {
+  const paths = findSkillYamlPaths(skillsDir)
+
+  for (const yamlPath of paths) {
+    const skill = parseSkillYaml(yamlPath)
+    if (skill && skill.name === name) {
+      return skill.systemPrompt
+    }
+  }
+
+  return null
 }
 
 export function getSkillByName(name: string, skills: Skill[]): Skill | undefined {

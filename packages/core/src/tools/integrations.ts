@@ -1,0 +1,551 @@
+import { registerTool } from '../tool-registry.js'
+import { callModel, resolveModelConfig } from '../model-provider.js'
+import type { ToolCallResult, ExecutionContext } from '../types.js'
+
+function stringifyError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+function makeResult(
+  toolName: string,
+  input: Record<string, unknown>,
+  success: boolean,
+  data: unknown,
+  display: string
+): ToolCallResult {
+  return {
+    toolUseId: '',
+    toolName,
+    input,
+    success,
+    data,
+    display,
+    durationMs: 0,
+    timestamp: new Date().toISOString(),
+  }
+}
+
+// ============================================================
+// GITHUB LIST ISSUES
+// ============================================================
+
+registerTool(
+  {
+    name: 'github_list_issues',
+    description: 'List open issues from a GitHub repository.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        repo: {
+          type: 'string',
+          description: 'GitHub repository in owner/repo format (e.g. "octocat/Hello-World")',
+        },
+        label: {
+          type: 'string',
+          description: 'Filter issues by label (optional)',
+        },
+        limit: {
+          type: 'string',
+          description: 'Maximum number of issues to return (default: 20)',
+          default: '20',
+        },
+      },
+      required: ['repo'],
+    },
+    category: 'system',
+  },
+  async (input: Record<string, unknown>, _context: ExecutionContext): Promise<ToolCallResult> => {
+    const { execSync } = await import('node:child_process')
+
+    const repo = input.repo as string
+    const label = input.label as string | undefined
+    const limit = (input.limit as string) ?? '20'
+
+    try {
+      const labelFlag = label ? ` --label "${label}"` : ''
+      const cmd = `gh issue list --repo ${repo} --state open --limit ${limit}${labelFlag} --json number,title,labels,assignees,createdAt`
+
+      const output = execSync(cmd, {
+        encoding: 'utf-8',
+        timeout: 30_000,
+      })
+
+      const issues = JSON.parse(output) as Array<{
+        number: number
+        title: string
+        labels: Array<{ name: string }>
+        assignees: Array<{ login: string }>
+        createdAt: string
+      }>
+
+      if (issues.length === 0) {
+        return makeResult('github_list_issues', input, true, issues, `No open issues found in ${repo}.`)
+      }
+
+      const display = issues
+        .map((issue) => {
+          const labels = issue.labels.map((l) => l.name).join(', ')
+          const assignees = issue.assignees.map((a) => a.login).join(', ')
+          return `#${issue.number} ${issue.title}${labels ? ` [${labels}]` : ''}${assignees ? ` (${assignees})` : ''}`
+        })
+        .join('\n')
+
+      return makeResult(
+        'github_list_issues',
+        input,
+        true,
+        issues,
+        `Found ${issues.length} open issues in ${repo}:\n${display}`
+      )
+    } catch (error) {
+      return makeResult('github_list_issues', input, false, null, `Failed to list issues: ${stringifyError(error)}`)
+    }
+  }
+)
+
+// ============================================================
+// GITHUB READ ISSUE
+// ============================================================
+
+registerTool(
+  {
+    name: 'github_read_issue',
+    description: 'Read a specific GitHub issue including comments.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        repo: {
+          type: 'string',
+          description: 'GitHub repository in owner/repo format',
+        },
+        number: {
+          type: 'string',
+          description: 'Issue number',
+        },
+      },
+      required: ['repo', 'number'],
+    },
+    category: 'system',
+  },
+  async (input: Record<string, unknown>, _context: ExecutionContext): Promise<ToolCallResult> => {
+    const { execSync } = await import('node:child_process')
+
+    const repo = input.repo as string
+    const number = input.number as string
+
+    try {
+      const cmd = `gh issue view ${number} --repo ${repo} --json title,body,comments,labels,state`
+      const output = execSync(cmd, {
+        encoding: 'utf-8',
+        timeout: 30_000,
+      })
+
+      const issue = JSON.parse(output) as {
+        title: string
+        body: string
+        state: string
+        labels: Array<{ name: string }>
+        comments: Array<{ author: { login: string }; body: string; createdAt: string }>
+      }
+
+      const labels = issue.labels.map((l) => l.name).join(', ')
+      const commentsDisplay = issue.comments.length > 0
+        ? issue.comments
+            .map((c) => `  @${c.author.login} (${c.createdAt}):\n  ${c.body}`)
+            .join('\n\n')
+        : '  No comments.'
+
+      const display = [
+        `#${number} ${issue.title} [${issue.state}]`,
+        labels ? `Labels: ${labels}` : '',
+        '',
+        issue.body ?? '(no description)',
+        '',
+        `Comments (${issue.comments.length}):`,
+        commentsDisplay,
+      ]
+        .filter(Boolean)
+        .join('\n')
+
+      return makeResult('github_read_issue', input, true, issue, display)
+    } catch (error) {
+      return makeResult('github_read_issue', input, false, null, `Failed to read issue: ${stringifyError(error)}`)
+    }
+  }
+)
+
+// ============================================================
+// GITHUB CREATE ISSUE
+// ============================================================
+
+registerTool(
+  {
+    name: 'github_create_issue',
+    description: 'Create a new GitHub issue.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        repo: {
+          type: 'string',
+          description: 'GitHub repository in owner/repo format',
+        },
+        title: {
+          type: 'string',
+          description: 'Issue title',
+        },
+        body: {
+          type: 'string',
+          description: 'Issue body/description (Markdown supported)',
+        },
+        labels: {
+          type: 'string',
+          description: 'Comma-separated labels to apply (optional)',
+        },
+      },
+      required: ['repo', 'title', 'body'],
+    },
+    category: 'system',
+  },
+  async (input: Record<string, unknown>, _context: ExecutionContext): Promise<ToolCallResult> => {
+    const { execSync } = await import('node:child_process')
+
+    const repo = input.repo as string
+    const title = input.title as string
+    const body = input.body as string
+    const labels = input.labels as string | undefined
+
+    try {
+      const labelFlags = labels
+        ? labels
+            .split(',')
+            .map((l) => `--label "${l.trim()}"`)
+            .join(' ')
+        : ''
+
+      const cmd = `gh issue create --repo ${repo} --title "${title.replace(/"/g, '\\"')}" --body "${body.replace(/"/g, '\\"')}" ${labelFlags}`
+
+      const output = execSync(cmd, {
+        encoding: 'utf-8',
+        timeout: 30_000,
+      })
+
+      return makeResult(
+        'github_create_issue',
+        input,
+        true,
+        { url: output.trim() },
+        `Created issue: ${output.trim()}`
+      )
+    } catch (error) {
+      return makeResult('github_create_issue', input, false, null, `Failed to create issue: ${stringifyError(error)}`)
+    }
+  }
+)
+
+// ============================================================
+// GITHUB COMMENT ISSUE
+// ============================================================
+
+registerTool(
+  {
+    name: 'github_comment_issue',
+    description: 'Add a comment to a GitHub issue.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        repo: {
+          type: 'string',
+          description: 'GitHub repository in owner/repo format',
+        },
+        number: {
+          type: 'string',
+          description: 'Issue number',
+        },
+        body: {
+          type: 'string',
+          description: 'Comment body (Markdown supported)',
+        },
+      },
+      required: ['repo', 'number', 'body'],
+    },
+    category: 'system',
+  },
+  async (input: Record<string, unknown>, _context: ExecutionContext): Promise<ToolCallResult> => {
+    const { execSync } = await import('node:child_process')
+
+    const repo = input.repo as string
+    const number = input.number as string
+    const body = input.body as string
+
+    try {
+      const cmd = `gh issue comment ${number} --repo ${repo} --body "${body.replace(/"/g, '\\"')}"`
+      execSync(cmd, {
+        encoding: 'utf-8',
+        timeout: 30_000,
+      })
+
+      return makeResult(
+        'github_comment_issue',
+        input,
+        true,
+        { repo, number },
+        `Added comment to issue #${number} in ${repo}.`
+      )
+    } catch (error) {
+      return makeResult('github_comment_issue', input, false, null, `Failed to comment on issue: ${stringifyError(error)}`)
+    }
+  }
+)
+
+// ============================================================
+// GITHUB CLOSE ISSUE
+// ============================================================
+
+registerTool(
+  {
+    name: 'github_close_issue',
+    description: 'Close a GitHub issue with an optional comment.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        repo: {
+          type: 'string',
+          description: 'GitHub repository in owner/repo format',
+        },
+        number: {
+          type: 'string',
+          description: 'Issue number',
+        },
+        comment: {
+          type: 'string',
+          description: 'Optional comment to add before closing',
+        },
+      },
+      required: ['repo', 'number'],
+    },
+    category: 'system',
+  },
+  async (input: Record<string, unknown>, _context: ExecutionContext): Promise<ToolCallResult> => {
+    const { execSync } = await import('node:child_process')
+
+    const repo = input.repo as string
+    const number = input.number as string
+    const comment = input.comment as string | undefined
+
+    try {
+      if (comment) {
+        const commentCmd = `gh issue comment ${number} --repo ${repo} --body "${comment.replace(/"/g, '\\"')}"`
+        execSync(commentCmd, {
+          encoding: 'utf-8',
+          timeout: 30_000,
+        })
+      }
+
+      const closeCmd = `gh issue close ${number} --repo ${repo}`
+      execSync(closeCmd, {
+        encoding: 'utf-8',
+        timeout: 30_000,
+      })
+
+      return makeResult(
+        'github_close_issue',
+        input,
+        true,
+        { repo, number },
+        `Closed issue #${number} in ${repo}.${comment ? ' Comment added.' : ''}`
+      )
+    } catch (error) {
+      return makeResult('github_close_issue', input, false, null, `Failed to close issue: ${stringifyError(error)}`)
+    }
+  }
+)
+
+// ============================================================
+// DEPLOY VERCEL
+// ============================================================
+
+registerTool(
+  {
+    name: 'deploy_vercel',
+    description: 'Deploy the current project or a specified directory to Vercel. Returns the deployment URL.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        path: {
+          type: 'string',
+          description: 'Directory to deploy (default: current directory)',
+        },
+        prod: {
+          type: 'string',
+          description: 'Set to "true" to deploy to production (default: preview)',
+        },
+      },
+      required: [],
+    },
+    category: 'system',
+  },
+  async (input: Record<string, unknown>, _context: ExecutionContext): Promise<ToolCallResult> => {
+    const { execSync } = await import('node:child_process')
+
+    const path = (input.path as string) || '.'
+    const prod = (input.prod as string) === 'true'
+
+    try {
+      // Check if vercel CLI is installed
+      try {
+        execSync('which vercel', { encoding: 'utf-8', timeout: 5000 })
+      } catch {
+        return makeResult(
+          'deploy_vercel',
+          input,
+          false,
+          null,
+          'Vercel CLI is not installed. Install it with: npm i -g vercel'
+        )
+      }
+
+      const prodFlag = prod ? ' --prod' : ''
+      const cmd = `vercel deploy ${path} --yes${prodFlag}`
+
+      const output = execSync(cmd, {
+        encoding: 'utf-8',
+        timeout: 300_000,
+        maxBuffer: 5 * 1024 * 1024,
+      })
+
+      // The deployment URL is typically the last line of output
+      const lines = output.trim().split('\n')
+      const url = lines[lines.length - 1].trim()
+
+      return makeResult(
+        'deploy_vercel',
+        input,
+        true,
+        { url, output: output.trim() },
+        `Deployed${prod ? ' to production' : ' (preview)'}:\n${url}`
+      )
+    } catch (error) {
+      return makeResult('deploy_vercel', input, false, null, `Deployment failed: ${stringifyError(error)}`)
+    }
+  }
+)
+
+// ============================================================
+// REVIEW PULL REQUEST
+// ============================================================
+
+registerTool(
+  {
+    name: 'review_pull_request',
+    description: 'Review a GitHub pull request: analyze the diff for bugs, security issues, performance problems, and style.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        repo: {
+          type: 'string',
+          description: 'GitHub repository in owner/repo format',
+        },
+        number: {
+          type: 'string',
+          description: 'Pull request number',
+        },
+      },
+      required: ['repo', 'number'],
+    },
+    category: 'system',
+  },
+  async (input: Record<string, unknown>, context: ExecutionContext): Promise<ToolCallResult> => {
+    const { execSync } = await import('node:child_process')
+
+    const repo = input.repo as string
+    const number = input.number as string
+
+    try {
+      // 1. Get PR metadata
+      const metaCmd = `gh pr view ${number} --repo ${repo} --json title,body,additions,deletions,changedFiles`
+      const metaOutput = execSync(metaCmd, {
+        encoding: 'utf-8',
+        timeout: 30_000,
+      })
+
+      const meta = JSON.parse(metaOutput) as {
+        title: string
+        body: string
+        additions: number
+        deletions: number
+        changedFiles: number
+      }
+
+      // 2. Get the diff
+      const diffCmd = `gh pr diff ${number} --repo ${repo}`
+      const diff = execSync(diffCmd, {
+        encoding: 'utf-8',
+        timeout: 60_000,
+        maxBuffer: 5 * 1024 * 1024,
+      })
+
+      // Truncate diff if too large for model context
+      const maxDiffLength = 50_000
+      const truncatedDiff = diff.length > maxDiffLength
+        ? diff.slice(0, maxDiffLength) + '\n\n... (diff truncated due to size)'
+        : diff
+
+      // 3. Call model to review
+      const config = resolveModelConfig(context.modelId)
+
+      const systemPrompt = `You are a senior code reviewer. Analyze the following pull request diff and provide a thorough review covering:
+
+1. **Bugs**: Logic errors, edge cases, null/undefined risks
+2. **Security**: Injection, XSS, secrets exposure, auth issues
+3. **Performance**: N+1 queries, unnecessary re-renders, memory leaks
+4. **Style**: Naming, readability, code organization
+5. **Missing Tests**: Areas that should have test coverage
+
+Format your review with clear sections and severity levels (CRITICAL, HIGH, MEDIUM, LOW).
+Be specific — reference file names and line numbers from the diff.
+If the PR looks good, say so briefly and note any minor suggestions.`
+
+      const userMessage = `## PR: ${meta.title}
+
+**Stats**: +${meta.additions} / -${meta.deletions} across ${meta.changedFiles} files
+
+**Description**:
+${meta.body ?? '(no description)'}
+
+**Diff**:
+\`\`\`diff
+${truncatedDiff}
+\`\`\``
+
+      const response = await callModel(
+        config,
+        systemPrompt,
+        [{ role: 'user', content: userMessage }],
+        [],
+        4096
+      )
+
+      const reviewText = response.content
+        .filter((block) => block.type === 'text')
+        .map((block) => (block as { type: 'text'; text: string }).text)
+        .join('\n')
+
+      const display = [
+        `PR Review: ${meta.title} (#${number})`,
+        `+${meta.additions} / -${meta.deletions} across ${meta.changedFiles} files`,
+        '',
+        reviewText,
+      ].join('\n')
+
+      return makeResult(
+        'review_pull_request',
+        input,
+        true,
+        { meta, review: reviewText },
+        display
+      )
+    } catch (error) {
+      return makeResult('review_pull_request', input, false, null, `Failed to review PR: ${stringifyError(error)}`)
+    }
+  }
+)

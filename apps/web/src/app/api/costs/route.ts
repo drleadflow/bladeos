@@ -8,7 +8,7 @@ export async function GET(): Promise<Response> {
     return Response.json({ success: true, data: summary })
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : 'Failed to get cost summary'
-    logger.error('Costs', 'GET error', { error: errorMessage })
+    logger.error('Costs', `GET error: ${errorMessage}`)
     return Response.json(
       { success: false, error: errorMessage },
       { status: 500 }

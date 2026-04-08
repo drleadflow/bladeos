@@ -13,22 +13,51 @@
     "./types": {
       "types": "./dist/types.d.ts",
       "import": "./dist/types.js"
+    },
+    "./pipeline": {
+      "types": "./dist/pipeline/index.d.ts",
+      "import": "./dist/pipeline/index.js"
+    },
+    "./cron": {
+      "types": "./dist/cron/index.d.ts",
+      "import": "./dist/cron/index.js"
+    },
+    "./security": {
+      "types": "./dist/security/index.d.ts",
+      "import": "./dist/security/index.js"
+    },
+    "./voice": {
+      "types": "./dist/voice/index.d.ts",
+      "import": "./dist/voice/index.js"
+    },
+    "./rag": {
+      "types": "./dist/rag/index.d.ts",
+      "import": "./dist/rag/index.js"
     }
   },
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "clean": "rm -rf dist"
   },
   "dependencies": {
     "@blade/shared": "*",
     "@blade/db": "*",
+    "@blade/docker-runner": "*",
     "@anthropic-ai/sdk": "^0.52.0",
     "js-yaml": "^4.1.0",
+    "node-cron": "^3.0.3",
+    "node-telegram-bot-api": "^0.66.0",
+    "livekit-server-sdk": "^2.9.1",
     "openai": "^4.80.0"
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
-    "typescript": "^5.8.0"
+    "@types/node-cron": "^3.0.11",
+    "@types/node-telegram-bot-api": "^0.64.0",
+    "typescript": "^5.8.0",
+    "vitest": "^3.1.0"
   }
 }

@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import { initializeDb, memories } from '@blade/db'
 import { logger } from '@blade/shared'
+import { requireAuth, unauthorizedResponse } from '@/lib/auth'
 
 export async function GET(req: NextRequest): Promise<Response> {
   try {
@@ -12,7 +13,7 @@ export async function GET(req: NextRequest): Promise<Response> {
     return Response.json({ success: true, data })
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : 'Failed to retrieve memories'
-    logger.error('Memory', 'GET error', { error: errorMessage })
+    logger.error('Memory', `GET error: ${errorMessage}`)
     return Response.json(
       { success: false, error: errorMessage },
       { status: 500 }
@@ -21,6 +22,9 @@ export async function GET(req: NextRequest): Promise<Response> {
 }
 
 export async function POST(req: NextRequest): Promise<Response> {
+  const auth = requireAuth(req)
+  if (!auth.authorized) return unauthorizedResponse(auth.error ?? 'Unauthorized')
+
   try {
     const body = await req.json()
     const { content, type, tags } = body as {
@@ -48,7 +52,7 @@ export async function POST(req: NextRequest): Promise<Response> {
     return Response.json({ success: true, data: result }, { status: 201 })
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : 'Failed to create memory'
-    logger.error('Memory', 'POST error', { error: errorMessage })
+    logger.error('Memory', `POST error: ${errorMessage}`)
     return Response.json(
       { success: false, error: errorMessage },
       { status: 500 }
@@ -57,6 +61,9 @@ export async function POST(req: NextRequest): Promise<Response> {
 }
 
 export async function DELETE(req: NextRequest): Promise<Response> {
+  const auth = requireAuth(req)
+  if (!auth.authorized) return unauthorizedResponse(auth.error ?? 'Unauthorized')
+
   try {
     const body = await req.json()
     const { id } = body as { id: string }
@@ -74,7 +81,7 @@ export async function DELETE(req: NextRequest): Promise<Response> {
     return Response.json({ success: true })
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : 'Failed to delete memory'
-    logger.error('Memory', 'DELETE error', { error: errorMessage })
+    logger.error('Memory', `DELETE error: ${errorMessage}`)
     return Response.json(
       { success: false, error: errorMessage },
       { status: 500 }

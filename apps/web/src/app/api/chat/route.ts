@@ -1,18 +1,22 @@
 import { NextRequest } from 'next/server'
 import { initializeDb, conversations, messages, costEntries } from '@blade/db'
-import { runAgentLoop, getAllToolDefinitions } from '@blade/core'
+import { runAgentLoop, getAllToolDefinitions, loadPersonality, buildMemoryAugmentedPrompt } from '@blade/core'
 import type { AgentMessage, ExecutionContext, AgentLoopOptions, AgentTurn, ToolCallResult } from '@blade/core'
-import { logger } from '@blade/shared'
+import { logger, loadConfig } from '@blade/shared'
+import { requireAuth, unauthorizedResponse } from '@/lib/auth'
 
 export const runtime = 'nodejs'
 
-const SYSTEM_PROMPT = `You are Blade, an AI super agent. You are helpful, direct, and capable.
+const BASE_SYSTEM_PROMPT = `You are Blade, an AI super agent. You are helpful, direct, and capable.
 You have tools for memory, file operations, and shell commands.
 When the user tells you a preference or important fact, save it to memory.
 When a topic comes up that you might have context on, use recall_memory.
 Be concise but thorough.`
 
 export async function POST(req: NextRequest): Promise<Response> {
+  const auth = requireAuth(req)
+  if (!auth.authorized) return unauthorizedResponse(auth.error ?? 'Unauthorized')
+
   try {
     const body = await req.json()
     const { message, conversationId: existingConversationId } = body as {
@@ -49,12 +53,19 @@ export async function POST(req: NextRequest): Promise<Response> {
       content: m.content,
     }))
 
+    const config = loadConfig()
+    const personality = loadPersonality()
+    const systemPrompt = buildMemoryAugmentedPrompt(
+      personality ? `${personality}\n\n${BASE_SYSTEM_PROMPT}` : BASE_SYSTEM_PROMPT,
+      message
+    )
+
     const context: ExecutionContext = {
       conversationId,
       userId: 'web-user',
-      modelId: 'claude-sonnet-4-20250514',
-      maxIterations: 20,
-      costBudget: 1.0,
+      modelId: config.defaultModel,
+      maxIterations: config.maxIterations,
+      costBudget: config.costBudget,
     }
 
     const tools = getAllToolDefinitions()
@@ -69,10 +80,11 @@ export async function POST(req: NextRequest): Promise<Response> {
 
         try {
           const options: AgentLoopOptions = {
-            systemPrompt: SYSTEM_PROMPT,
+            systemPrompt: systemPrompt,
             messages: agentMessages,
             tools,
             context,
+            streaming: true,
             onTextDelta(text: string) {
               sendEvent('text', { conversationId, text })
             },
@@ -156,7 +168,7 @@ export async function POST(req: NextRequest): Promise<Response> {
     })
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : 'Internal server error'
-    logger.error('Chat', 'Route error', { error: errorMessage })
+    logger.error('Chat', `Route error: ${errorMessage}`)
     return Response.json(
       { success: false, error: errorMessage },
       { status: 500 }

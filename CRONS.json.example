@@ -1,0 +1,18 @@
+[
+  {
+    "id": "daily-summary",
+    "name": "Daily Cost Summary",
+    "schedule": "0 9 * * *",
+    "task": "Generate a summary of yesterday's costs and agent activity",
+    "enabled": true
+  },
+  {
+    "id": "nightly-code-review",
+    "name": "Nightly Code Review",
+    "schedule": "0 2 * * *",
+    "task": "Review open PRs and add comments for any issues found",
+    "repoUrl": "https://github.com/your-org/your-repo",
+    "model": "claude-sonnet-4-20250514",
+    "enabled": false
+  }
+]
