@@ -507,6 +507,44 @@ export const workflowRuns = {
 }
 
 // ============================================================
+// HANDOFFS
+// ============================================================
+
+export const handoffs = {
+  create(params: { id: string; fromEmployee: string; toEmployee: string; reason: string; context: string; priority: string }): void {
+    db().prepare(
+      'INSERT INTO handoffs (id, from_employee, to_employee, reason, context, priority, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+    ).run(params.id, params.fromEmployee, params.toEmployee, params.reason, params.context, params.priority, 'pending', now())
+  },
+
+  get(id: string) {
+    return db().prepare(
+      `SELECT id, from_employee as fromEmployee, to_employee as toEmployee, reason, context, priority, status, created_at as createdAt, completed_at as completedAt
+       FROM handoffs WHERE id = ?`
+    ).get(id) as { id: string; fromEmployee: string; toEmployee: string; reason: string; context: string; priority: string; status: string; createdAt: string; completedAt: string | null } | undefined
+  },
+
+  listPendingForEmployee(toEmployee: string) {
+    return db().prepare(
+      `SELECT id, from_employee as fromEmployee, to_employee as toEmployee, reason, context, priority, status, created_at as createdAt, completed_at as completedAt
+       FROM handoffs WHERE to_employee = ? AND status = 'pending' ORDER BY
+         CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END`
+    ).all(toEmployee) as { id: string; fromEmployee: string; toEmployee: string; reason: string; context: string; priority: string; status: string; createdAt: string; completedAt: string | null }[]
+  },
+
+  updateStatus(id: string, status: string): void {
+    const completedAt = status === 'completed' ? now() : null
+    db().prepare(
+      'UPDATE handoffs SET status = ?, completed_at = ? WHERE id = ?'
+    ).run(status, completedAt, id)
+  },
+
+  clear(): void {
+    db().prepare('DELETE FROM handoffs').run()
+  },
+}
+
+// ============================================================
 // EVOLUTION EVENTS
 // ============================================================
 

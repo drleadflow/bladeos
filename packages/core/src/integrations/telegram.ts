@@ -1,6 +1,7 @@
 import TelegramBot from 'node-telegram-bot-api'
 import { initializeDb, conversations, messages, memories, costEntries } from '@blade/db'
 import { runAgentLoop, getAllToolDefinitions, buildMemoryAugmentedPrompt } from '../index.js'
+import { resolveSmartModelConfig } from '../model-provider.js'
 import type { AgentMessage, ExecutionContext } from '../types.js'
 import { logger } from '@blade/shared'
 import { speechToText } from '../voice/deepgram-stt.js'
@@ -285,10 +286,12 @@ export function startTelegramBot(token: string, allowedChatIds?: string[]): Tele
       history.push({ role: 'user', content: transcript })
       messages.create({ conversationId, role: 'user', content: transcript })
 
+      const chatModelConfig = resolveSmartModelConfig('standard')
+
       const context: ExecutionContext = {
         conversationId,
         userId: `telegram-${chatId}`,
-        modelId: 'claude-sonnet-4-20250514',
+        modelId: chatModelConfig.modelId,
         maxIterations: 15,
         costBudget: 0,
       }
@@ -329,7 +332,7 @@ export function startTelegramBot(token: string, allowedChatIds?: string[]): Tele
       // Update history
       history.push({ role: 'assistant', content: responseText })
       chatHistories.set(chatId, history)
-      messages.create({ conversationId, role: 'assistant', content: responseText, model: 'claude-sonnet-4-20250514' })
+      messages.create({ conversationId, role: 'assistant', content: responseText, model: chatModelConfig.modelId })
 
     } catch (err) {
       logger.error('Telegram', `Voice error: ${err instanceof Error ? err.message : String(err)}`)
@@ -371,10 +374,12 @@ export function startTelegramBot(token: string, allowedChatIds?: string[]): Tele
         content: userText,
       })
 
+      const textModelConfig = resolveSmartModelConfig('standard')
+
       const context: ExecutionContext = {
         conversationId,
         userId: `telegram-${chatId}`,
-        modelId: 'claude-sonnet-4-20250514',
+        modelId: textModelConfig.modelId,
         maxIterations: 15,
         costBudget: 0,
       }
@@ -416,7 +421,7 @@ export function startTelegramBot(token: string, allowedChatIds?: string[]): Tele
         conversationId,
         role: 'assistant',
         content: responseText,
-        model: 'claude-sonnet-4-20250514',
+        model: textModelConfig.modelId,
       })
 
     } catch (err) {

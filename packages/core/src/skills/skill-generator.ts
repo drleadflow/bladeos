@@ -1,7 +1,7 @@
 import { writeFileSync, mkdirSync } from 'fs'
 import { join } from 'path'
 import { homedir } from 'os'
-import { callModel, resolveModelConfig } from '../model-provider.js'
+import { callModel, resolveSmartModelConfig } from '../model-provider.js'
 import { skills } from '@blade/db'
 import type { Skill } from '../types.js'
 
@@ -64,7 +64,7 @@ export async function generateSkillFromJob(
     }
 
     // Use Haiku to generate a skill definition
-    const config = resolveModelConfig('claude-haiku-4-20250514')
+    const config = resolveSmartModelConfig('light')
 
     const prompt = `Based on this completed task, generate a reusable skill definition as YAML.
 

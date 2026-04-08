@@ -8,3 +8,16 @@ CREATE TABLE IF NOT EXISTS workflow_runs (
   completed_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_workflow_runs_status ON workflow_runs(status);
+
+CREATE TABLE IF NOT EXISTS handoffs (
+  id TEXT PRIMARY KEY,
+  from_employee TEXT NOT NULL,
+  to_employee TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  context TEXT NOT NULL,
+  priority TEXT NOT NULL DEFAULT 'medium',
+  status TEXT NOT NULL DEFAULT 'pending',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  completed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_handoffs_to ON handoffs(to_employee, status);

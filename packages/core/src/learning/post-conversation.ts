@@ -1,5 +1,5 @@
 import type { AgentMessage, ToolCallResult, MemoryType } from '../types.js'
-import { callModel, resolveModelConfig } from '../model-provider.js'
+import { callModel, resolveSmartModelConfig } from '../model-provider.js'
 import { memoryStore } from '../memory/memory-store.js'
 import { logger } from '@blade/shared'
 
@@ -38,7 +38,7 @@ export async function extractLearnings(
 
     const transcript = buildTranscript(messages, toolCalls)
 
-    const config = resolveModelConfig('claude-haiku-4-20250514')
+    const config = resolveSmartModelConfig('light')
 
     if (!config.apiKey) {
       logger.warn('Learning', 'No API key available for learning extraction, skipping')

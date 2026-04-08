@@ -1,6 +1,7 @@
 import crypto from 'node:crypto'
 import { getEmployee } from './registry.js'
 import { logger } from '@blade/shared'
+import { handoffs as handoffRepo } from '@blade/db'
 
 export interface HandoffRequest {
   id: string
@@ -13,9 +14,6 @@ export interface HandoffRequest {
   createdAt: string
 }
 
-// In-memory store for handoffs (persisted per process lifecycle)
-const handoffStore: Map<string, HandoffRequest> = new Map()
-
 export function requestHandoff(handoff: Omit<HandoffRequest, 'id' | 'status' | 'createdAt'>): HandoffRequest {
   const fromEmployee = getEmployee(handoff.fromEmployee)
   if (!fromEmployee) {
@@ -27,44 +25,51 @@ export function requestHandoff(handoff: Omit<HandoffRequest, 'id' | 'status' | '
     throw new Error(`Target employee "${handoff.toEmployee}" not found`)
   }
 
-  const entry: HandoffRequest = {
-    ...handoff,
-    id: crypto.randomUUID(),
-    status: 'pending',
-    createdAt: new Date().toISOString(),
-  }
+  const id = crypto.randomUUID()
+  const createdAt = new Date().toISOString()
 
-  handoffStore.set(entry.id, entry)
+  handoffRepo.create({
+    id,
+    fromEmployee: handoff.fromEmployee,
+    toEmployee: handoff.toEmployee,
+    reason: handoff.reason,
+    context: handoff.context,
+    priority: handoff.priority,
+  })
 
   logger.info(
     'Collaboration',
     `Handoff from "${handoff.fromEmployee}" to "${handoff.toEmployee}": ${handoff.reason} [${handoff.priority}]`
   )
 
-  return entry
+  return {
+    ...handoff,
+    id,
+    status: 'pending',
+    createdAt,
+  }
 }
 
 export function getHandoffsForEmployee(employeeId: string): HandoffRequest[] {
-  return [...handoffStore.values()]
-    .filter(h => h.toEmployee === employeeId && h.status === 'pending')
-    .sort((a, b) => {
-      const priorityOrder: Record<string, number> = { urgent: 0, high: 1, medium: 2, low: 3 }
-      return (priorityOrder[a.priority] ?? 3) - (priorityOrder[b.priority] ?? 3)
-    })
+  const rows = handoffRepo.listPendingForEmployee(employeeId)
+  return rows.map(row => ({
+    id: row.id,
+    fromEmployee: row.fromEmployee,
+    toEmployee: row.toEmployee,
+    reason: row.reason,
+    context: row.context,
+    priority: row.priority as HandoffRequest['priority'],
+    status: row.status as HandoffRequest['status'],
+    createdAt: row.createdAt,
+  }))
 }
 
 export function acceptHandoff(handoffId: string): void {
-  const handoff = handoffStore.get(handoffId)
-  if (handoff) {
-    handoffStore.set(handoffId, { ...handoff, status: 'accepted' })
-  }
+  handoffRepo.updateStatus(handoffId, 'accepted')
 }
 
 export function completeHandoff(handoffId: string): void {
-  const handoff = handoffStore.get(handoffId)
-  if (handoff) {
-    handoffStore.set(handoffId, { ...handoff, status: 'completed' })
-  }
+  handoffRepo.updateStatus(handoffId, 'completed')
 }
 
 export function buildCollaborationContext(employeeId: string): string {
@@ -97,5 +102,5 @@ export function buildCollaborationContext(employeeId: string): string {
 }
 
 export function clearHandoffs(): void {
-  handoffStore.clear()
+  handoffRepo.clear()
 }

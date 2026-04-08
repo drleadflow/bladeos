@@ -1,6 +1,6 @@
 import { getDb } from '@blade/db'
 import { memoryStore } from '../memory/memory-store.js'
-import { callModel, resolveModelConfig } from '../model-provider.js'
+import { callModel, resolveSmartModelConfig } from '../model-provider.js'
 import { logger } from '@blade/shared'
 
 // ============================================================
@@ -142,7 +142,7 @@ async function analyzeRecentFailures(): Promise<EvolutionEvent[]> {
     if (count >= 3) {
       // This error appeared 3+ times — generate a skill suggestion
       try {
-        const config = resolveModelConfig('claude-haiku-4-20250514')
+        const config = resolveSmartModelConfig('light')
 
         if (!config.apiKey) continue
 
@@ -219,7 +219,7 @@ async function optimizePopularSkills(): Promise<EvolutionEvent[]> {
 
   for (const skill of popularSkills) {
     try {
-      const config = resolveModelConfig('claude-haiku-4-20250514')
+      const config = resolveSmartModelConfig('light')
 
       if (!config.apiKey) continue
 

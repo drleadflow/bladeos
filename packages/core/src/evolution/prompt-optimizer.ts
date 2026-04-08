@@ -1,5 +1,5 @@
 import { getDb } from '@blade/db'
-import { callModel, resolveModelConfig } from '../model-provider.js'
+import { callModel, resolveSmartModelConfig } from '../model-provider.js'
 import { logger } from '@blade/shared'
 
 function db() {
@@ -99,7 +99,7 @@ export async function optimizeEmployeePrompt(
     }
 
     // Use haiku to generate an improved prompt
-    const config = resolveModelConfig('claude-haiku-4-20250514')
+    const config = resolveSmartModelConfig('light')
 
     if (!config.apiKey) {
       logger.warn('PromptOptimizer', 'No API key available for prompt optimization')

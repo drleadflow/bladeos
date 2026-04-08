@@ -1,4 +1,4 @@
-import { execSync } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import { readFileSync, writeFileSync, readdirSync, statSync, rmSync } from 'node:fs'
 import { join, relative } from 'node:path'
 
@@ -56,8 +56,14 @@ function updateStatus(
 }
 
 function runLocal(cmd: string, cwd: string): { stdout: string; stderr: string; exitCode: number } {
+  // Validate against blocklist before executing
+  for (const pattern of BLOCKED_COMMANDS) {
+    if (cmd.includes(pattern)) {
+      return { stdout: '', stderr: `Blocked: ${pattern}`, exitCode: 1 }
+    }
+  }
   try {
-    const stdout = execSync(cmd, { cwd, encoding: 'utf-8', timeout: 120_000, stdio: ['pipe', 'pipe', 'pipe'] }).trim()
+    const stdout = execFileSync('/bin/sh', ['-c', cmd], { cwd, encoding: 'utf-8', timeout: 120_000, stdio: ['pipe', 'pipe', 'pipe'] }).trim()
     return { stdout, stderr: '', exitCode: 0 }
   } catch (err: unknown) {
     const execErr = err as { stdout?: string; stderr?: string; status?: number }

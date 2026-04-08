@@ -507,8 +507,6 @@ registerTool(
     category: 'system',
   },
   async (input: Record<string, unknown>, _context: ExecutionContext): Promise<ToolCallResult> => {
-    const { execSync } = await import('node:child_process')
-
     const command = input.command as string
     const cwd = (input.cwd as string) || process.cwd()
 
@@ -544,7 +542,8 @@ registerTool(
     }
 
     try {
-      const output = execSync(command, {
+      const { execFileSync } = await import('node:child_process')
+      const output = execFileSync('/bin/sh', ['-c', command], {
         cwd,
         encoding: 'utf-8',
         timeout: 60_000,

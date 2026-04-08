@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server'
 import { initializeDb, conversations, messages, costEntries } from '@blade/db'
-import { runAgentLoop, getAllToolDefinitions, loadPersonality, buildMemoryAugmentedPrompt, calculateCost } from '@blade/core'
+import { runAgentLoop, getAllToolDefinitions, loadPersonality, buildMemoryAugmentedPrompt, calculateCost, resolveSmartModelConfig } from '@blade/core'
 import type { AgentMessage, ExecutionContext, AgentLoopOptions, AgentTurn, ToolCallResult } from '@blade/core'
 import { logger, loadConfig } from '@blade/shared'
 import { requireAuth, unauthorizedResponse } from '@/lib/auth'
@@ -80,10 +80,16 @@ export async function POST(req: NextRequest): Promise<Response> {
       message
     )
 
+    // Use smart routing for model selection: if user has not set an explicit
+    // model in config, let resolveSmartModelConfig pick the best provider
+    // (OpenRouter when available, saving the Claude subscription for heavy tasks).
+    const smartConfig = resolveSmartModelConfig('standard')
+    const modelId = config.defaultModel || smartConfig.modelId
+
     const context: ExecutionContext = {
       conversationId,
       userId: 'web-user',
-      modelId: config.defaultModel,
+      modelId,
       maxIterations: config.maxIterations,
       costBudget: config.costBudget,
     }
