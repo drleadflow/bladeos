@@ -1,0 +1,17 @@
+import { initializeDb, costEntries } from '@blade/db'
+import { logger } from '@blade/shared'
+
+export async function GET(): Promise<Response> {
+  try {
+    initializeDb()
+    const summary = costEntries.summary()
+    return Response.json({ success: true, data: summary })
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : 'Failed to get cost summary'
+    logger.error('Costs', 'GET error', { error: errorMessage })
+    return Response.json(
+      { success: false, error: errorMessage },
+      { status: 500 }
+    )
+  }
+}

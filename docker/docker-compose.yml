@@ -1,0 +1,26 @@
+version: "3.8"
+
+services:
+  blade-web:
+    build:
+      context: ..
+      dockerfile: apps/web/Dockerfile
+    ports:
+      - "3000:3000"
+    env_file:
+      - ../.env
+    volumes:
+      - blade-data:/data
+    depends_on:
+      - blade-sandbox
+
+  blade-sandbox:
+    build:
+      context: .
+      dockerfile: Dockerfile.sandbox
+    volumes:
+      - blade-data:/workspace
+    # No ports exposed — used for container spawning only
+
+volumes:
+  blade-data:

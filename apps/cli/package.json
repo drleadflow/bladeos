@@ -1,0 +1,25 @@
+{
+  "name": "@blade/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "blade": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@blade/core": "*",
+    "@blade/db": "*",
+    "@blade/docker-runner": "*",
+    "@blade/shared": "*",
+    "commander": "^14.0.0",
+    "chalk": "^5.4.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.0"
+  }
+}

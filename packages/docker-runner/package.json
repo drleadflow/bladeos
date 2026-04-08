@@ -1,0 +1,29 @@
+{
+  "name": "@blade/docker-runner",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@blade/shared": "*",
+    "@blade/core": "*",
+    "dockerode": "^4.0.0",
+    "@octokit/rest": "^21.1.0"
+  },
+  "devDependencies": {
+    "@types/dockerode": "^3.3.34",
+    "typescript": "^5.8.0"
+  }
+}
