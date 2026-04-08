@@ -7,7 +7,11 @@ import type { ToolCallResult, ExecutionContext } from '../types.js'
 
 const GHL_MCP_URL = 'https://dlf-agency.skool-203.workers.dev/mcp'
 
-async function callGhlMcp(toolName: string, input: Record<string, unknown>): Promise<unknown> {
+let _mcpSessionId: string | null = null
+
+async function initMcpSession(): Promise<string> {
+  if (_mcpSessionId) return _mcpSessionId
+
   const userKey = process.env.GHL_MCP_USER_KEY
   if (!userKey) throw new Error('GHL_MCP_USER_KEY not configured. Add it to your .env file.')
 
@@ -15,7 +19,44 @@ async function callGhlMcp(toolName: string, input: Record<string, unknown>): Pro
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      'Accept': 'application/json, text/event-stream',
       'X-User-Key': userKey,
+    },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: 'init',
+      method: 'initialize',
+      params: {
+        protocolVersion: '2025-03-26',
+        capabilities: {},
+        clientInfo: { name: 'blade-super-agent', version: '1.0' },
+      },
+    }),
+  })
+
+  const sessionId = response.headers.get('mcp-session-id')
+  if (!sessionId) throw new Error('MCP server did not return a session ID')
+
+  // Consume the response body
+  await response.text()
+
+  _mcpSessionId = sessionId
+  return sessionId
+}
+
+async function callGhlMcp(toolName: string, input: Record<string, unknown>): Promise<unknown> {
+  const userKey = process.env.GHL_MCP_USER_KEY
+  if (!userKey) throw new Error('GHL_MCP_USER_KEY not configured. Add it to your .env file.')
+
+  const sessionId = await initMcpSession()
+
+  const response = await fetch(GHL_MCP_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json, text/event-stream',
+      'X-User-Key': userKey,
+      'Mcp-Session-Id': sessionId,
     },
     body: JSON.stringify({
       jsonrpc: '2.0',
@@ -26,13 +67,42 @@ async function callGhlMcp(toolName: string, input: Record<string, unknown>): Pro
   })
 
   if (!response.ok) {
+    // Session may have expired — reset and retry once
+    _mcpSessionId = null
     const body = await response.text().catch(() => '')
     throw new Error(`GHL MCP server ${response.status}: ${body.slice(0, 300)}`)
   }
 
-  const data = await response.json() as { error?: { message: string }; result?: unknown }
-  if (data.error) throw new Error(data.error.message)
-  return data.result
+  // Parse SSE response
+  const text = await response.text()
+  for (const line of text.split('\n')) {
+    if (line.startsWith('data:')) {
+      try {
+        const data = JSON.parse(line.slice(5).trim())
+        if (data.error) throw new Error(data.error.message ?? JSON.stringify(data.error))
+        if (data.result?.content) {
+          // Extract text content from MCP response
+          for (const block of data.result.content) {
+            if (block.type === 'text') {
+              try { return JSON.parse(block.text) } catch { return block.text }
+            }
+          }
+        }
+        return data.result
+      } catch (e) {
+        if (e instanceof Error && e.message.includes('MCP')) throw e
+      }
+    }
+  }
+
+  // Try parsing as plain JSON
+  try {
+    const data = JSON.parse(text)
+    if (data.error) throw new Error(data.error.message)
+    return data.result
+  } catch {
+    return text
+  }
 }
 
 function makeResult(toolName: string, input: Record<string, unknown>, success: boolean, data: unknown, display: string): ToolCallResult {
