@@ -3,6 +3,8 @@ import { initializeDb, conversations, messages, memories, costEntries } from '@b
 import { runAgentLoop, getAllToolDefinitions, buildMemoryAugmentedPrompt } from '../index.js'
 import type { AgentMessage, ExecutionContext } from '../types.js'
 import { logger } from '@blade/shared'
+import { speechToText } from '../voice/deepgram-stt.js'
+import { textToSpeech } from '../voice/cartesia-tts.js'
 
 const TELEGRAM_MAX_MESSAGE_LENGTH = 4096
 
@@ -197,14 +199,91 @@ export function startTelegramBot(token: string, allowedChatIds?: string[]): Tele
   bot.on('voice', async (msg) => {
     if (!isAllowed(msg.chat.id)) return
 
+    const chatId = String(msg.chat.id)
+
     try {
       await bot.sendMessage(msg.chat.id, '🎤 Transcribing...')
-      await bot.sendMessage(
-        msg.chat.id,
-        'Voice transcription coming soon. Please type your message.'
-      )
+
+      // 1. Download the voice file from Telegram
+      const fileLink = await bot.getFileLink(msg.voice!.file_id)
+      const audioResponse = await fetch(fileLink)
+      if (!audioResponse.ok) {
+        throw new Error(`Failed to download voice file: ${audioResponse.status}`)
+      }
+      const audioBuffer = Buffer.from(await audioResponse.arrayBuffer())
+
+      // 2. Transcribe with Deepgram
+      const transcript = await speechToText(audioBuffer)
+
+      if (!transcript.trim()) {
+        await bot.sendMessage(msg.chat.id, 'Could not transcribe the voice message. Please try again.')
+        return
+      }
+
+      await bot.sendMessage(msg.chat.id, `📝 *Heard:* ${transcript}`, { parse_mode: 'Markdown' })
+
+      // 3. Run the transcription through the normal chat flow
+      const conversationId = getOrCreateConversation(chatId)
+      const history = chatHistories.get(chatId) ?? []
+      const tools = getAllToolDefinitions()
+      const augmentedPrompt = buildMemoryAugmentedPrompt(SYSTEM_PROMPT, transcript)
+
+      history.push({ role: 'user', content: transcript })
+      messages.create({ conversationId, role: 'user', content: transcript })
+
+      const context: ExecutionContext = {
+        conversationId,
+        userId: `telegram-${chatId}`,
+        modelId: 'claude-sonnet-4-20250514',
+        maxIterations: 15,
+        costBudget: 0,
+      }
+
+      await bot.sendChatAction(msg.chat.id, 'typing')
+
+      const result = await runAgentLoop({
+        systemPrompt: augmentedPrompt,
+        messages: history,
+        tools,
+        context,
+        onToolCall: async (tc) => {
+          try {
+            await bot.sendMessage(msg.chat.id, `🔧 Using ${tc.toolName}...`)
+          } catch {
+            // Non-critical
+          }
+        },
+      })
+
+      const responseText = result.finalResponse || 'I processed your request but have no text response.'
+
+      // Send text response
+      for (const chunk of splitMessage(responseText)) {
+        await bot.sendMessage(msg.chat.id, chunk)
+      }
+
+      // 4. Send voice reply using Cartesia TTS
+      try {
+        const voiceBuffer = await textToSpeech(responseText.slice(0, 2000))
+        await bot.sendVoice(msg.chat.id, voiceBuffer, {}, { filename: 'response.mp3', contentType: 'audio/mpeg' })
+      } catch (ttsErr) {
+        logger.error('Telegram', `TTS reply error: ${ttsErr instanceof Error ? ttsErr.message : String(ttsErr)}`)
+        // Non-critical — text response was already sent
+      }
+
+      // Update history
+      history.push({ role: 'assistant', content: responseText })
+      chatHistories.set(chatId, history)
+      messages.create({ conversationId, role: 'assistant', content: responseText, model: 'claude-sonnet-4-20250514' })
+
     } catch (err) {
       logger.error('Telegram', `Voice error: ${err instanceof Error ? err.message : String(err)}`)
+      try {
+        const errorMsg = err instanceof Error ? err.message : 'An unexpected error occurred'
+        await bot.sendMessage(msg.chat.id, `❌ Voice error: ${errorMsg.slice(0, 200)}`)
+      } catch {
+        // Last resort
+      }
     }
   })
 

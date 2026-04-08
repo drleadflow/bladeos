@@ -59,6 +59,10 @@ export { getSanitizedEnv } from './security/index.js'
 // Voice
 export { createVoiceRoom, generateParticipantToken } from './voice/index.js'
 export type { VoiceConfig, VoiceRoomResult } from './voice/index.js'
+export { textToSpeech } from './voice/index.js'
+export type { TextToSpeechOptions } from './voice/index.js'
+export { speechToText } from './voice/index.js'
+export type { SpeechToTextOptions } from './voice/index.js'
 
 // RAG
 export { ingestDocument, searchDocuments, listDocuments, deleteDocument } from './rag/index.js'
