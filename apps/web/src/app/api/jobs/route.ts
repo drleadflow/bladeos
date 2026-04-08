@@ -3,7 +3,10 @@ import { initializeDb, jobs } from '@blade/db'
 import { logger } from '@blade/shared'
 import { requireAuth, unauthorizedResponse } from '@/lib/auth'
 
-export async function GET(): Promise<Response> {
+export async function GET(request: Request): Promise<Response> {
+  const auth = requireAuth(request)
+  if (!auth.authorized) return unauthorizedResponse(auth.error ?? 'Unauthorized')
+
   try {
     initializeDb()
     const list = jobs.list()

@@ -18,13 +18,54 @@ Key behaviors:
 - Be concise but thorough. Show your work when using tools.
 - Track what works and what doesn't — you get better over time.
 
-You are communicating via Telegram. Keep responses concise and well-formatted for mobile reading.`
+You are communicating via Telegram. IMPORTANT formatting rules:
+- Keep responses concise for mobile reading.
+- Do NOT use markdown formatting (no **bold**, no *italic*, no ## headers, no \`code blocks\`).
+- Write in plain text only. Use emojis sparingly for emphasis instead of markdown.
+- Be conversational and natural, like texting a friend who happens to be incredibly capable.
+- Never mention Claude, Claude Code, or any internal system details.
+- You are Blade. That's it.`
 
-/** In-memory map of Telegram chat ID to conversation ID */
-const chatConversations = new Map<string, string>()
+/**
+ * Look up the conversation ID for a Telegram chat from the DB.
+ * Conversations are stored with title 'Telegram chat {chatId}'.
+ */
+function findConversationForChat(chatId: string): string | undefined {
+  const title = `Telegram chat ${chatId}`
+  const allConvs = conversations.list(200)
+  const match = allConvs.find(c => c.title === title)
+  return match?.id
+}
 
-/** In-memory map of Telegram chat ID to message history */
-const chatHistories = new Map<string, AgentMessage[]>()
+/**
+ * Load message history for a conversation from the DB.
+ */
+function loadHistoryFromDb(conversationId: string): AgentMessage[] {
+  const dbMessages = messages.listByConversation(conversationId)
+  return dbMessages.map(m => ({
+    role: m.role as 'user' | 'assistant',
+    content: m.content,
+  }))
+}
+
+/**
+ * Clean up agent response for Telegram — strip internal metadata, markdown, system messages.
+ */
+function cleanResponse(text: string): string {
+  let cleaned = text
+  // Remove "Claude Code finished in X / Reason: Y" lines
+  cleaned = cleaned.replace(/Claude Code finished in.*\n?/gi, '')
+  cleaned = cleaned.replace(/Reason: (completed|end_turn|tool_use|error).*\n?/gi, '')
+  // Remove markdown formatting
+  cleaned = cleaned.replace(/\*\*(.*?)\*\*/g, '$1')  // **bold** → bold
+  cleaned = cleaned.replace(/\*(.*?)\*/g, '$1')       // *italic* → italic
+  cleaned = cleaned.replace(/#{1,6}\s/g, '')           // ## headers → plain
+  cleaned = cleaned.replace(/```[\s\S]*?```/g, (m) => m.replace(/```\w*\n?/g, '').trim()) // code blocks → plain
+  cleaned = cleaned.replace(/`([^`]+)`/g, '$1')        // `inline code` → plain
+  // Remove leading/trailing whitespace and extra newlines
+  cleaned = cleaned.replace(/\n{3,}/g, '\n\n').trim()
+  return cleaned
+}
 
 /**
  * Split a long message into chunks that respect Telegram's 4096 character limit.
@@ -58,15 +99,28 @@ function splitMessage(text: string): string[] {
   return chunks
 }
 
+/** In-memory caches that hydrate from DB on first access */
+const chatConversations = new Map<string, string>()
+const chatHistories = new Map<string, AgentMessage[]>()
+
 /**
  * Get or create a conversation for a given Telegram chat ID.
+ * Checks DB first, then in-memory cache, then creates new.
  */
 function getOrCreateConversation(chatId: string): string {
-  const existing = chatConversations.get(chatId)
-  if (existing) {
-    return existing
+  // Check cache
+  const cached = chatConversations.get(chatId)
+  if (cached) return cached
+
+  // Check DB
+  const fromDb = findConversationForChat(chatId)
+  if (fromDb) {
+    chatConversations.set(chatId, fromDb)
+    chatHistories.set(chatId, loadHistoryFromDb(fromDb))
+    return fromDb
   }
 
+  // Create new
   const conv = conversations.create(`Telegram chat ${chatId}`)
   chatConversations.set(chatId, conv.id)
   chatHistories.set(chatId, [])
@@ -148,7 +202,7 @@ export function startTelegramBot(token: string, allowedChatIds?: string[]): Tele
       const text = '🧠 *Recent Memories*\n\n' + lines.join('\n')
 
       for (const chunk of splitMessage(text)) {
-        await bot.sendMessage(msg.chat.id, chunk, { parse_mode: 'Markdown' })
+        await bot.sendMessage(msg.chat.id, chunk)
       }
     } catch (err) {
       logger.error('Telegram', `/memory error: ${err instanceof Error ? err.message : String(err)}`)
@@ -174,7 +228,7 @@ export function startTelegramBot(token: string, allowedChatIds?: string[]): Tele
         modelLines ? `\nBy model:\n${modelLines}` : '',
       ].join('\n')
 
-      await bot.sendMessage(msg.chat.id, text, { parse_mode: 'Markdown' })
+      await bot.sendMessage(msg.chat.id, text)
     } catch (err) {
       logger.error('Telegram', `/costs error: ${err instanceof Error ? err.message : String(err)}`)
       await bot.sendMessage(msg.chat.id, 'Failed to retrieve cost summary.').catch(() => {})
@@ -220,7 +274,7 @@ export function startTelegramBot(token: string, allowedChatIds?: string[]): Tele
         return
       }
 
-      await bot.sendMessage(msg.chat.id, `📝 *Heard:* ${transcript}`, { parse_mode: 'Markdown' })
+      await bot.sendMessage(msg.chat.id, `📝 Heard: ${transcript}`)
 
       // 3. Run the transcription through the normal chat flow
       const conversationId = getOrCreateConversation(chatId)
@@ -255,7 +309,8 @@ export function startTelegramBot(token: string, allowedChatIds?: string[]): Tele
         },
       })
 
-      const responseText = result.finalResponse || 'I processed your request but have no text response.'
+      const rawResponse = result.finalResponse || 'I processed your request but have no text response.'
+      const responseText = cleanResponse(rawResponse)
 
       // Send text response
       for (const chunk of splitMessage(responseText)) {
@@ -344,7 +399,8 @@ export function startTelegramBot(token: string, allowedChatIds?: string[]): Tele
         },
       })
 
-      const responseText = result.finalResponse || 'I processed your request but have no text response.'
+      const rawText = result.finalResponse || 'I processed your request but have no text response.'
+      const responseText = cleanResponse(rawText)
 
       // Send response, splitting if needed
       for (const chunk of splitMessage(responseText)) {

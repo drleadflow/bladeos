@@ -59,7 +59,7 @@ export default function Home() {
         onNewChat={handleNewChat}
       />
       <div className="flex-1">
-        <ChatPanel key={chatKey} />
+        <ChatPanel key={chatKey} conversationId={conversationId} />
       </div>
     </div>
   )

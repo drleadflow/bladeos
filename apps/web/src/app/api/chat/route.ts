@@ -1,11 +1,31 @@
 import { NextRequest } from 'next/server'
 import { initializeDb, conversations, messages, costEntries } from '@blade/db'
-import { runAgentLoop, getAllToolDefinitions, loadPersonality, buildMemoryAugmentedPrompt } from '@blade/core'
+import { runAgentLoop, getAllToolDefinitions, loadPersonality, buildMemoryAugmentedPrompt, calculateCost } from '@blade/core'
 import type { AgentMessage, ExecutionContext, AgentLoopOptions, AgentTurn, ToolCallResult } from '@blade/core'
 import { logger, loadConfig } from '@blade/shared'
 import { requireAuth, unauthorizedResponse } from '@/lib/auth'
 
 export const runtime = 'nodejs'
+
+export async function GET(req: NextRequest): Promise<Response> {
+  const auth = requireAuth(req)
+  if (!auth.authorized) return unauthorizedResponse(auth.error ?? 'Unauthorized')
+
+  const conversationId = req.nextUrl.searchParams.get('conversationId')
+  if (!conversationId) {
+    return Response.json({ success: false, error: 'conversationId required' }, { status: 400 })
+  }
+
+  try {
+    initializeDb()
+    const msgs = messages.listByConversation(conversationId)
+    return Response.json({ success: true, data: msgs })
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : 'Failed to load messages'
+    logger.error('Chat', `GET error: ${errorMessage}`)
+    return Response.json({ success: false, error: errorMessage }, { status: 500 })
+  }
+}
 
 const BASE_SYSTEM_PROMPT = `You are Blade, an AI super agent. You are helpful, direct, and capable.
 You have tools for memory, file operations, and shell commands.
@@ -125,12 +145,13 @@ export async function POST(req: NextRequest): Promise<Response> {
           const totalOutputTokens = result.turns.reduce((sum, t) => sum + t.response.outputTokens, 0)
 
           if (result.totalCost > 0) {
+            const costBreakdown = calculateCost(context.modelId, totalInputTokens, totalOutputTokens)
             costEntries.record({
               model: context.modelId,
               inputTokens: totalInputTokens,
               outputTokens: totalOutputTokens,
-              inputCostUsd: result.totalCost * 0.4,
-              outputCostUsd: result.totalCost * 0.6,
+              inputCostUsd: costBreakdown.inputCostUsd,
+              outputCostUsd: costBreakdown.outputCostUsd,
               totalCostUsd: result.totalCost,
               conversationId,
             })

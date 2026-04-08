@@ -26,7 +26,7 @@ export function getDb(dbPath?: string): Database.Database {
 export function initializeDb(dbPath?: string): Database.Database {
   const db = getDb(dbPath)
 
-  const migrationFiles = ['0001_init.sql', '0002_employees.sql', '0003_documents.sql', '0004_gamification.sql', '0005_evolution.sql']
+  const migrationFiles = ['0001_init.sql', '0002_employees.sql', '0003_documents.sql', '0004_gamification.sql', '0005_evolution.sql', '0006_workflow_runs.sql']
 
   for (const file of migrationFiles) {
     const migrationPath = join(__dirname, '..', 'src', 'migrations', file)

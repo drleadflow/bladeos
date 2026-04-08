@@ -14,6 +14,7 @@ export async function POST(
     const { id } = await params
     initializeDb()
 
+    // Prevent duplicate starts
     const job = jobs.get(id)
     if (!job) {
       return Response.json(
@@ -21,6 +22,17 @@ export async function POST(
         { status: 404 }
       )
     }
+
+    const jobStatus = (job as { status: string }).status
+    if (jobStatus !== 'queued') {
+      return Response.json(
+        { success: false, error: `Job is already ${jobStatus}. Cannot start again.` },
+        { status: 409 }
+      )
+    }
+
+    // Mark as started immediately to prevent race conditions
+    jobs.updateStatus(id, 'cloning')
 
     const jobData = job as { id: string; title: string; description: string; repoUrl: string; baseBranch: string; agentModel: string }
 

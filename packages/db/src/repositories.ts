@@ -452,6 +452,61 @@ export const achievements = {
 }
 
 // ============================================================
+// WORKFLOW RUNS
+// ============================================================
+
+export const workflowRuns = {
+  create(params: { id: string; workflowId: string }): void {
+    db().prepare(
+      'INSERT INTO workflow_runs (id, workflow_id, status, step_results_json, total_cost, started_at) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run(params.id, params.workflowId, 'running', '{}', 0, now())
+  },
+
+  get(id: string) {
+    return db().prepare(
+      `SELECT id, workflow_id as workflowId, status, step_results_json as stepResultsJson,
+       total_cost as totalCost, started_at as startedAt, completed_at as completedAt
+       FROM workflow_runs WHERE id = ?`
+    ).get(id) as { id: string; workflowId: string; status: string; stepResultsJson: string; totalCost: number; startedAt: string; completedAt: string | null } | undefined
+  },
+
+  update(id: string, params: { status?: string; stepResultsJson?: string; totalCost?: number; completedAt?: string }): void {
+    const sets: string[] = []
+    const values: unknown[] = []
+
+    if (params.status !== undefined) {
+      sets.push('status = ?')
+      values.push(params.status)
+    }
+    if (params.stepResultsJson !== undefined) {
+      sets.push('step_results_json = ?')
+      values.push(params.stepResultsJson)
+    }
+    if (params.totalCost !== undefined) {
+      sets.push('total_cost = ?')
+      values.push(params.totalCost)
+    }
+    if (params.completedAt !== undefined) {
+      sets.push('completed_at = ?')
+      values.push(params.completedAt)
+    }
+
+    if (sets.length === 0) return
+
+    values.push(id)
+    db().prepare(`UPDATE workflow_runs SET ${sets.join(', ')} WHERE id = ?`).run(...values)
+  },
+
+  list(limit = 50) {
+    return db().prepare(
+      `SELECT id, workflow_id as workflowId, status, step_results_json as stepResultsJson,
+       total_cost as totalCost, started_at as startedAt, completed_at as completedAt
+       FROM workflow_runs ORDER BY started_at DESC LIMIT ?`
+    ).all(limit) as { id: string; workflowId: string; status: string; stepResultsJson: string; totalCost: number; startedAt: string; completedAt: string | null }[]
+  },
+}
+
+// ============================================================
 // EVOLUTION EVENTS
 // ============================================================
 

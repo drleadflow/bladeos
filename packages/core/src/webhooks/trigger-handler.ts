@@ -108,9 +108,10 @@ export async function handleWebhookTrigger(
   logger.info('Webhooks', `Handling trigger "${trigger.id}" for employee "${trigger.employeeId}"`)
 
   try {
-    const tools = getAllToolDefinitions().filter(
-      t => employee.tools.includes(t.name) || t.category === 'system'
-    )
+    const allTools = getAllToolDefinitions()
+    const tools = employee.tools?.length
+      ? allTools.filter(t => employee.tools.includes(t.name) || t.category === 'system')
+      : allTools  // fallback to all if no tools declared
 
     const result = await runAgentLoop({
       systemPrompt,

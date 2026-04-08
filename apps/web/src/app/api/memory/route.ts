@@ -4,6 +4,9 @@ import { logger } from '@blade/shared'
 import { requireAuth, unauthorizedResponse } from '@/lib/auth'
 
 export async function GET(req: NextRequest): Promise<Response> {
+  const auth = requireAuth(req)
+  if (!auth.authorized) return unauthorizedResponse(auth.error ?? 'Unauthorized')
+
   try {
     initializeDb()
 

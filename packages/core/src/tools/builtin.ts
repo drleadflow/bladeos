@@ -512,6 +512,37 @@ registerTool(
     const command = input.command as string
     const cwd = (input.cwd as string) || process.cwd()
 
+    // Comprehensive blocklist to prevent dangerous commands
+    const DANGEROUS_PATTERNS = [
+      'rm -rf /', 'rm -rf ~', 'rm -rf *',
+      'sudo ', 'su ',
+      'mkfs', 'dd if=', 'fdisk',
+      'chmod 777 /', 'chown -R',
+      '> /dev/', '> /etc/',
+      'curl | sh', 'curl | bash', 'wget | sh', 'wget | bash',
+      'eval ', 'exec ',
+      '$(', '`',  // command substitution
+      '; rm', '&& rm', '|| rm',  // chained destructive
+      'env ', 'export ',  // env manipulation
+      '/etc/passwd', '/etc/shadow',  // sensitive files
+    ]
+
+    const lowerCommand = command.toLowerCase()
+    for (const pattern of DANGEROUS_PATTERNS) {
+      if (lowerCommand.includes(pattern.toLowerCase())) {
+        return {
+          toolUseId: '',
+          toolName: 'run_command',
+          input,
+          success: false,
+          data: null,
+          display: `Command blocked: contains dangerous pattern "${pattern}". This command is not allowed for safety reasons.`,
+          durationMs: 0,
+          timestamp: new Date().toISOString(),
+        }
+      }
+    }
+
     try {
       const output = execSync(command, {
         cwd,
@@ -939,10 +970,10 @@ registerTool(
 const AGENT_BROWSER_NOT_INSTALLED =
   'agent-browser not installed. Run: npm install -g agent-browser && agent-browser install'
 
-function runAgentBrowser(command: string): { success: boolean; output: string } {
+function runAgentBrowser(args: string[]): { success: boolean; output: string } {
   try {
-    const { execSync } = require('node:child_process') as typeof import('node:child_process')
-    const output = execSync(command, {
+    const { execFileSync } = require('node:child_process') as typeof import('node:child_process')
+    const output = execFileSync('agent-browser', args, {
       encoding: 'utf-8',
       timeout: 60_000,
       maxBuffer: 2 * 1024 * 1024,
@@ -980,9 +1011,20 @@ registerTool(
   },
   async (input: Record<string, unknown>, _context: ExecutionContext): Promise<ToolCallResult> => {
     const url = input.url as string
-    const result = runAgentBrowser(
-      `agent-browser navigate ${JSON.stringify(url)} && agent-browser snapshot`
-    )
+    const navigateResult = runAgentBrowser(['navigate', url])
+    if (!navigateResult.success) {
+      return {
+        toolUseId: '',
+        toolName: 'browse_url',
+        input,
+        success: false,
+        data: null,
+        display: navigateResult.output,
+        durationMs: 0,
+        timestamp: new Date().toISOString(),
+      }
+    }
+    const result = runAgentBrowser(['snapshot'])
 
     return {
       toolUseId: '',
@@ -1020,9 +1062,20 @@ registerTool(
   },
   async (input: Record<string, unknown>, _context: ExecutionContext): Promise<ToolCallResult> => {
     const ref = input.ref as string
-    const result = runAgentBrowser(
-      `agent-browser click ${JSON.stringify(ref)} && agent-browser snapshot`
-    )
+    const clickResult = runAgentBrowser(['click', ref])
+    if (!clickResult.success) {
+      return {
+        toolUseId: '',
+        toolName: 'browse_click',
+        input,
+        success: false,
+        data: null,
+        display: clickResult.output,
+        durationMs: 0,
+        timestamp: new Date().toISOString(),
+      }
+    }
+    const result = runAgentBrowser(['snapshot'])
 
     return {
       toolUseId: '',
@@ -1065,9 +1118,20 @@ registerTool(
   async (input: Record<string, unknown>, _context: ExecutionContext): Promise<ToolCallResult> => {
     const ref = input.ref as string
     const text = input.text as string
-    const result = runAgentBrowser(
-      `agent-browser type ${JSON.stringify(ref)} ${JSON.stringify(text)} && agent-browser snapshot`
-    )
+    const typeResult = runAgentBrowser(['type', ref, text])
+    if (!typeResult.success) {
+      return {
+        toolUseId: '',
+        toolName: 'browse_type',
+        input,
+        success: false,
+        data: null,
+        display: typeResult.output,
+        durationMs: 0,
+        timestamp: new Date().toISOString(),
+      }
+    }
+    const result = runAgentBrowser(['snapshot'])
 
     return {
       toolUseId: '',
@@ -1105,9 +1169,7 @@ registerTool(
   },
   async (input: Record<string, unknown>, _context: ExecutionContext): Promise<ToolCallResult> => {
     const filePath = (input.path as string) || '/tmp/blade-screenshot.png'
-    const result = runAgentBrowser(
-      `agent-browser screenshot --path ${JSON.stringify(filePath)}`
-    )
+    const result = runAgentBrowser(['screenshot', '--path', filePath])
 
     return {
       toolUseId: '',

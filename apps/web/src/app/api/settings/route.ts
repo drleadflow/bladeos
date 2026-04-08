@@ -54,7 +54,10 @@ function getKeyStatus(): Record<string, boolean> {
   }
 }
 
-export async function GET(): Promise<Response> {
+export async function GET(request: Request): Promise<Response> {
+  const auth = requireAuth(request)
+  if (!auth.authorized) return unauthorizedResponse(auth.error ?? 'Unauthorized')
+
   try {
     const config = loadConfig()
     const personality = readPersonality()

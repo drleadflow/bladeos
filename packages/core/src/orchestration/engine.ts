@@ -2,6 +2,7 @@ import { runAgentLoop } from '../agent-loop.js'
 import { getAllToolDefinitions } from '../tool-registry.js'
 import { getEmployee } from '../employees/registry.js'
 import { logger } from '@blade/shared'
+import { initializeDb, workflowRuns } from '@blade/db'
 import type { AgentMessage, ExecutionContext } from '../types.js'
 
 export interface WorkflowStep {
@@ -39,7 +40,6 @@ export interface WorkflowRun {
 }
 
 const _workflows: Map<string, Workflow> = new Map()
-const _runs: Map<string, WorkflowRun> = new Map()
 
 export function defineWorkflow(workflow: Workflow): void {
   _workflows.set(workflow.id, workflow)
@@ -50,7 +50,18 @@ export function listWorkflows(): Workflow[] {
 }
 
 export function getWorkflowRun(runId: string): WorkflowRun | undefined {
-  return _runs.get(runId)
+  initializeDb()
+  const row = workflowRuns.get(runId)
+  if (!row) return undefined
+  return {
+    id: row.id,
+    workflowId: row.workflowId,
+    status: row.status as WorkflowRun['status'],
+    stepResults: JSON.parse(row.stepResultsJson),
+    startedAt: row.startedAt,
+    completedAt: row.completedAt ?? undefined,
+    totalCost: row.totalCost,
+  }
 }
 
 function getReadySteps(workflow: Workflow, completedSteps: Set<string>): WorkflowStep[] {
@@ -80,6 +91,7 @@ export async function runWorkflow(
   const workflow = _workflows.get(workflowId)
   if (!workflow) throw new Error(`Workflow "${workflowId}" not found`)
 
+  initializeDb()
   const runId = crypto.randomUUID()
   const run: WorkflowRun = {
     id: runId,
@@ -89,7 +101,7 @@ export async function runWorkflow(
     startedAt: new Date().toISOString(),
     totalCost: 0,
   }
-  _runs.set(runId, run)
+  workflowRuns.create({ id: runId, workflowId })
 
   logger.info('Workflow', `Starting workflow "${workflow.name}" (run: ${runId})`)
 
@@ -174,12 +186,26 @@ export async function runWorkflow(
       }
     }
 
+    // Persist intermediate progress to DB
+    workflowRuns.update(runId, {
+      stepResultsJson: JSON.stringify(run.stepResults),
+      totalCost: run.totalCost,
+    })
+
     // Check if all steps are done
     if (completedSteps.size + failedSteps.size >= workflow.steps.length) break
   }
 
   run.status = failedSteps.size > 0 ? 'failed' : 'completed'
   run.completedAt = new Date().toISOString()
+
+  // Persist final state to DB
+  workflowRuns.update(runId, {
+    status: run.status,
+    stepResultsJson: JSON.stringify(run.stepResults),
+    totalCost: run.totalCost,
+    completedAt: run.completedAt,
+  })
 
   logger.info('Workflow', `Workflow "${workflow.name}" ${run.status} — $${run.totalCost.toFixed(4)}`)
 

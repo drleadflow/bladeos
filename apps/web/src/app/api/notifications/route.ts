@@ -1,10 +1,14 @@
 import { NextRequest } from 'next/server'
 import { initializeDb, notifications } from '@blade/db'
 import { logger } from '@blade/shared'
+import { requireAuth, unauthorizedResponse } from '@/lib/auth'
 
 export const runtime = 'nodejs'
 
-export async function GET(): Promise<Response> {
+export async function GET(request: Request): Promise<Response> {
+  const auth = requireAuth(request)
+  if (!auth.authorized) return unauthorizedResponse(auth.error ?? 'Unauthorized')
+
   try {
     initializeDb()
     const list = notifications.list()
@@ -27,6 +31,9 @@ export async function GET(): Promise<Response> {
 }
 
 export async function POST(req: NextRequest): Promise<Response> {
+  const postAuth = requireAuth(req)
+  if (!postAuth.authorized) return unauthorizedResponse(postAuth.error ?? 'Unauthorized')
+
   try {
     const body = (await req.json()) as { id?: string; markAllRead?: boolean }
 

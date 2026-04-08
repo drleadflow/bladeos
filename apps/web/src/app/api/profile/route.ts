@@ -7,10 +7,14 @@ import {
   checkAchievements,
   getRecentXP,
 } from '@blade/core'
+import { requireAuth, unauthorizedResponse } from '@/lib/auth'
 
 export const runtime = 'nodejs'
 
-export async function GET() {
+export async function GET(request: Request) {
+  const auth = requireAuth(request)
+  if (!auth.authorized) return unauthorizedResponse(auth.error ?? 'Unauthorized')
+
   try {
     initializeDb()
 

@@ -6,6 +6,37 @@ function stringifyError(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+/**
+ * Validate that a string looks like a safe owner/repo identifier.
+ * Rejects anything that could be used for shell injection.
+ */
+function validateRepo(repo: string): string {
+  if (!/^[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+$/.test(repo)) {
+    throw new Error(`Invalid repository format: "${repo}". Expected owner/repo (e.g. "octocat/Hello-World")`)
+  }
+  return repo
+}
+
+/**
+ * Validate that a string is a numeric issue/PR number.
+ */
+function validateNumber(num: string): string {
+  if (!/^\d+$/.test(num)) {
+    throw new Error(`Invalid issue/PR number: "${num}". Expected a numeric value.`)
+  }
+  return num
+}
+
+/**
+ * Validate that a path is safe (no shell metacharacters).
+ */
+function validatePath(path: string): string {
+  if (/[;&|`$(){}!<>]/.test(path)) {
+    throw new Error(`Invalid path: "${path}". Path contains disallowed characters.`)
+  }
+  return path
+}
+
 function makeResult(
   toolName: string,
   input: Record<string, unknown>,
@@ -55,17 +86,19 @@ registerTool(
     category: 'system',
   },
   async (input: Record<string, unknown>, _context: ExecutionContext): Promise<ToolCallResult> => {
-    const { execSync } = await import('node:child_process')
+    const { execFileSync } = await import('node:child_process')
 
-    const repo = input.repo as string
+    const repo = validateRepo(input.repo as string)
     const label = input.label as string | undefined
     const limit = (input.limit as string) ?? '20'
 
     try {
-      const labelFlag = label ? ` --label "${label}"` : ''
-      const cmd = `gh issue list --repo ${repo} --state open --limit ${limit}${labelFlag} --json number,title,labels,assignees,createdAt`
+      const args = ['issue', 'list', '--repo', repo, '--state', 'open', '--limit', limit, '--json', 'number,title,labels,assignees,createdAt']
+      if (label) {
+        args.push('--label', label)
+      }
 
-      const output = execSync(cmd, {
+      const output = execFileSync('gh', args, {
         encoding: 'utf-8',
         timeout: 30_000,
       })
@@ -128,14 +161,13 @@ registerTool(
     category: 'system',
   },
   async (input: Record<string, unknown>, _context: ExecutionContext): Promise<ToolCallResult> => {
-    const { execSync } = await import('node:child_process')
+    const { execFileSync } = await import('node:child_process')
 
-    const repo = input.repo as string
-    const number = input.number as string
+    const repo = validateRepo(input.repo as string)
+    const number = validateNumber(input.number as string)
 
     try {
-      const cmd = `gh issue view ${number} --repo ${repo} --json title,body,comments,labels,state`
-      const output = execSync(cmd, {
+      const output = execFileSync('gh', ['issue', 'view', number, '--repo', repo, '--json', 'title,body,comments,labels,state'], {
         encoding: 'utf-8',
         timeout: 30_000,
       })
@@ -207,24 +239,22 @@ registerTool(
     category: 'system',
   },
   async (input: Record<string, unknown>, _context: ExecutionContext): Promise<ToolCallResult> => {
-    const { execSync } = await import('node:child_process')
+    const { execFileSync } = await import('node:child_process')
 
-    const repo = input.repo as string
+    const repo = validateRepo(input.repo as string)
     const title = input.title as string
     const body = input.body as string
     const labels = input.labels as string | undefined
 
     try {
-      const labelFlags = labels
-        ? labels
-            .split(',')
-            .map((l) => `--label "${l.trim()}"`)
-            .join(' ')
-        : ''
+      const args = ['issue', 'create', '--repo', repo, '--title', title, '--body', body]
+      if (labels) {
+        for (const label of labels.split(',')) {
+          args.push('--label', label.trim())
+        }
+      }
 
-      const cmd = `gh issue create --repo ${repo} --title "${title.replace(/"/g, '\\"')}" --body "${body.replace(/"/g, '\\"')}" ${labelFlags}`
-
-      const output = execSync(cmd, {
+      const output = execFileSync('gh', args, {
         encoding: 'utf-8',
         timeout: 30_000,
       })
@@ -271,15 +301,14 @@ registerTool(
     category: 'system',
   },
   async (input: Record<string, unknown>, _context: ExecutionContext): Promise<ToolCallResult> => {
-    const { execSync } = await import('node:child_process')
+    const { execFileSync } = await import('node:child_process')
 
-    const repo = input.repo as string
-    const number = input.number as string
+    const repo = validateRepo(input.repo as string)
+    const number = validateNumber(input.number as string)
     const body = input.body as string
 
     try {
-      const cmd = `gh issue comment ${number} --repo ${repo} --body "${body.replace(/"/g, '\\"')}"`
-      execSync(cmd, {
+      execFileSync('gh', ['issue', 'comment', number, '--repo', repo, '--body', body], {
         encoding: 'utf-8',
         timeout: 30_000,
       })
@@ -326,23 +355,21 @@ registerTool(
     category: 'system',
   },
   async (input: Record<string, unknown>, _context: ExecutionContext): Promise<ToolCallResult> => {
-    const { execSync } = await import('node:child_process')
+    const { execFileSync } = await import('node:child_process')
 
-    const repo = input.repo as string
-    const number = input.number as string
+    const repo = validateRepo(input.repo as string)
+    const number = validateNumber(input.number as string)
     const comment = input.comment as string | undefined
 
     try {
       if (comment) {
-        const commentCmd = `gh issue comment ${number} --repo ${repo} --body "${comment.replace(/"/g, '\\"')}"`
-        execSync(commentCmd, {
+        execFileSync('gh', ['issue', 'comment', number, '--repo', repo, '--body', comment], {
           encoding: 'utf-8',
           timeout: 30_000,
         })
       }
 
-      const closeCmd = `gh issue close ${number} --repo ${repo}`
-      execSync(closeCmd, {
+      execFileSync('gh', ['issue', 'close', number, '--repo', repo], {
         encoding: 'utf-8',
         timeout: 30_000,
       })
@@ -385,15 +412,15 @@ registerTool(
     category: 'system',
   },
   async (input: Record<string, unknown>, _context: ExecutionContext): Promise<ToolCallResult> => {
-    const { execSync } = await import('node:child_process')
+    const { execFileSync } = await import('node:child_process')
 
-    const path = (input.path as string) || '.'
+    const path = validatePath((input.path as string) || '.')
     const prod = (input.prod as string) === 'true'
 
     try {
       // Check if vercel CLI is installed
       try {
-        execSync('which vercel', { encoding: 'utf-8', timeout: 5000 })
+        execFileSync('which', ['vercel'], { encoding: 'utf-8', timeout: 5000 })
       } catch {
         return makeResult(
           'deploy_vercel',
@@ -404,10 +431,12 @@ registerTool(
         )
       }
 
-      const prodFlag = prod ? ' --prod' : ''
-      const cmd = `vercel deploy ${path} --yes${prodFlag}`
+      const args = ['deploy', path, '--yes']
+      if (prod) {
+        args.push('--prod')
+      }
 
-      const output = execSync(cmd, {
+      const output = execFileSync('vercel', args, {
         encoding: 'utf-8',
         timeout: 300_000,
         maxBuffer: 5 * 1024 * 1024,
@@ -455,15 +484,14 @@ registerTool(
     category: 'system',
   },
   async (input: Record<string, unknown>, context: ExecutionContext): Promise<ToolCallResult> => {
-    const { execSync } = await import('node:child_process')
+    const { execFileSync } = await import('node:child_process')
 
-    const repo = input.repo as string
-    const number = input.number as string
+    const repo = validateRepo(input.repo as string)
+    const number = validateNumber(input.number as string)
 
     try {
       // 1. Get PR metadata
-      const metaCmd = `gh pr view ${number} --repo ${repo} --json title,body,additions,deletions,changedFiles`
-      const metaOutput = execSync(metaCmd, {
+      const metaOutput = execFileSync('gh', ['pr', 'view', number, '--repo', repo, '--json', 'title,body,additions,deletions,changedFiles'], {
         encoding: 'utf-8',
         timeout: 30_000,
       })
@@ -477,8 +505,7 @@ registerTool(
       }
 
       // 2. Get the diff
-      const diffCmd = `gh pr diff ${number} --repo ${repo}`
-      const diff = execSync(diffCmd, {
+      const diff = execFileSync('gh', ['pr', 'diff', number, '--repo', repo], {
         encoding: 'utf-8',
         timeout: 60_000,
         maxBuffer: 5 * 1024 * 1024,

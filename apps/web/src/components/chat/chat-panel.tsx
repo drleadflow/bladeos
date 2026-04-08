@@ -2,13 +2,48 @@
 
 import { useEffect, useRef } from 'react'
 import { useBladeChat } from '@/lib/use-chat'
+import { useChatStore } from '@/lib/store'
 import { MessageList } from './message-list'
 import { MessageInput } from './message-input'
 
-export function ChatPanel() {
+interface ChatPanelProps {
+  conversationId?: string
+}
+
+export function ChatPanel({ conversationId: externalConversationId }: ChatPanelProps) {
   const { messages, isStreaming, totalCost, sendMessage, clearMessages } =
     useBladeChat()
+  const { addMessage, setConversationId, clearMessages: resetMessages } = useChatStore()
   const scrollRef = useRef<HTMLDivElement>(null)
+  const loadedConvRef = useRef<string | undefined>(undefined)
+
+  // Load conversation history when conversationId prop changes
+  useEffect(() => {
+    if (!externalConversationId || externalConversationId === loadedConvRef.current) return
+    loadedConvRef.current = externalConversationId
+
+    async function loadHistory() {
+      try {
+        resetMessages()
+        const res = await fetch(`/api/chat?conversationId=${externalConversationId}`)
+        const data = await res.json()
+        if (data.success && Array.isArray(data.data)) {
+          setConversationId(externalConversationId!)
+          for (const msg of data.data) {
+            addMessage({
+              id: msg.id,
+              role: msg.role as 'user' | 'assistant',
+              content: msg.content,
+            })
+          }
+        }
+      } catch {
+        // Non-critical — start with empty chat
+      }
+    }
+
+    loadHistory()
+  }, [externalConversationId, addMessage, setConversationId, resetMessages])
 
   useEffect(() => {
     const el = scrollRef.current

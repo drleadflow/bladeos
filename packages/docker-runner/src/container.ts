@@ -40,6 +40,8 @@ export async function createContainer(
       CapDrop: ['ALL'],
       CapAdd: ['CHOWN', 'DAC_OVERRIDE', 'FOWNER', 'SETGID', 'SETUID'],
       SecurityOpt: ['no-new-privileges'],
+      PidsLimit: 256,              // Prevent fork bombs
+      CpuQuota: 100000,            // 100% of 1 CPU (100ms per 100ms period)
       Tmpfs: { '/tmp': 'rw,noexec,nosuid,size=256m' },
     } as Dockerode.HostConfig,
   })
