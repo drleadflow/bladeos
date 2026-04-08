@@ -597,19 +597,8 @@ export function resolveSmartModelConfig(complexity: TaskComplexity = 'standard')
     }
   }
 
-  // Standard tasks: prefer OpenRouter to save subscription, fall back to CLI
-  if (complexity === 'standard') {
-    if (hasOpenRouter) {
-      return {
-        provider: 'openrouter',
-        modelId: 'anthropic/claude-sonnet-4-20250514',
-        apiKey: process.env.OPENROUTER_API_KEY!,
-        baseUrl: 'https://openrouter.ai/api/v1',
-      }
-    }
-  }
-
-  // Heavy tasks or fallback: use Claude CLI subscription (best quality)
+  // Standard + Heavy tasks: use Claude CLI (best quality, your subscription)
+  // Only light background tasks go to OpenRouter to save limits
   if (hasClaudeCli) {
     return { provider: 'claude-cli', modelId: 'claude-sonnet-4-20250514', apiKey: process.env.ANTHROPIC_API_KEY! }
   }
