@@ -1,28 +1,38 @@
 import { registerTool } from '../tool-registry.js'
 import type { ToolCallResult, ExecutionContext } from '../types.js'
 
-const GHL_BASE = 'https://services.leadconnectorhq.com'
+// ============================================================
+// GHL MCP SERVER CLIENT
+// ============================================================
 
-function ghlHeaders(): Record<string, string> {
-  const key = process.env.GHL_API_KEY
-  if (!key) throw new Error('GHL_API_KEY not configured. Add it to your .env file.')
-  return {
-    'Authorization': `Bearer ${key}`,
-    'Version': '2021-07-28',
-    'Content-Type': 'application/json',
-  }
-}
+const GHL_MCP_URL = 'https://dlf-agency.skool-203.workers.dev/mcp'
 
-async function ghlFetch(path: string, locationId?: string): Promise<unknown> {
-  const locId = locationId ?? process.env.GHL_LOCATION_ID
-  const separator = path.includes('?') ? '&' : '?'
-  const url = `${GHL_BASE}${path}${locId ? `${separator}locationId=${locId}` : ''}`
-  const res = await fetch(url, { headers: ghlHeaders() })
-  if (!res.ok) {
-    const body = await res.text().catch(() => '')
-    throw new Error(`GHL API ${res.status}: ${body.slice(0, 300)}`)
+async function callGhlMcp(toolName: string, input: Record<string, unknown>): Promise<unknown> {
+  const userKey = process.env.GHL_MCP_USER_KEY
+  if (!userKey) throw new Error('GHL_MCP_USER_KEY not configured. Add it to your .env file.')
+
+  const response = await fetch(GHL_MCP_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-User-Key': userKey,
+    },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: crypto.randomUUID(),
+      method: 'tools/call',
+      params: { name: toolName, arguments: input },
+    }),
+  })
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => '')
+    throw new Error(`GHL MCP server ${response.status}: ${body.slice(0, 300)}`)
   }
-  return res.json()
+
+  const data = await response.json() as { error?: { message: string }; result?: unknown }
+  if (data.error) throw new Error(data.error.message)
+  return data.result
 }
 
 function makeResult(toolName: string, input: Record<string, unknown>, success: boolean, data: unknown, display: string): ToolCallResult {
@@ -50,15 +60,15 @@ registerTool(
   },
   async (input, _ctx): Promise<ToolCallResult> => {
     try {
-      const locationId = input.locationId as string | undefined
+      const locationId = (input.locationId as string) ?? process.env.GHL_LOCATION_ID
       const limit = parseInt((input.limit as string) ?? '20', 10)
       const status = (input.status as string) ?? 'all'
 
-      let path = `/conversations/search?limit=${limit}`
-      if (status !== 'all') path += `&status=${status}`
+      const mcpInput: Record<string, unknown> = { locationId, limit }
+      if (status !== 'all') mcpInput.status = status
 
-      const data = await ghlFetch(path, locationId) as { conversations?: unknown[] }
-      const convos = data.conversations ?? []
+      const result = await callGhlMcp('ghl_search_conversations', mcpInput) as { conversations?: unknown[] }
+      const convos = result?.conversations ?? (Array.isArray(result) ? result : [])
 
       const display = convos.length > 0
         ? `Found ${convos.length} conversations:\n${(convos as Array<{ contactName?: string; lastMessageBody?: string; unreadCount?: number; id?: string }>).map((c, i) =>
@@ -95,8 +105,9 @@ registerTool(
     try {
       const convId = input.conversationId as string
       const limit = parseInt((input.limit as string) ?? '20', 10)
-      const data = await ghlFetch(`/conversations/${convId}/messages?limit=${limit}`) as { messages?: { messages?: unknown[] } }
-      const msgs = data.messages?.messages ?? []
+
+      const result = await callGhlMcp('ghl_get_conversation_messages', { conversationId: convId, limit }) as { messages?: unknown[] }
+      const msgs = result?.messages ?? (Array.isArray(result) ? result : [])
 
       const display = msgs.length > 0
         ? (msgs as Array<{ direction?: string; body?: string; dateAdded?: string; contactName?: string }>).map(m =>
@@ -133,11 +144,11 @@ registerTool(
   async (input, _ctx): Promise<ToolCallResult> => {
     try {
       const query = input.query as string
-      const locationId = input.locationId as string | undefined
+      const locationId = (input.locationId as string) ?? process.env.GHL_LOCATION_ID
       const limit = parseInt((input.limit as string) ?? '10', 10)
 
-      const data = await ghlFetch(`/contacts/search?query=${encodeURIComponent(query)}&limit=${limit}`, locationId) as { contacts?: unknown[] }
-      const contacts = data.contacts ?? []
+      const result = await callGhlMcp('ghl_search_contacts', { query, locationId, limit }) as { contacts?: unknown[] }
+      const contacts = result?.contacts ?? (Array.isArray(result) ? result : [])
 
       const display = contacts.length > 0
         ? `Found ${contacts.length} contacts:\n${(contacts as Array<{ firstName?: string; lastName?: string; email?: string; phone?: string; id?: string }>).map((c, i) =>
@@ -171,13 +182,14 @@ registerTool(
   },
   async (input, _ctx): Promise<ToolCallResult> => {
     try {
-      const locationId = input.locationId as string | undefined
-      const data = await ghlFetch('/opportunities/pipelines', locationId) as { pipelines?: unknown[] }
-      const pipelines = data.pipelines ?? []
+      const locationId = (input.locationId as string) ?? process.env.GHL_LOCATION_ID
+
+      const result = await callGhlMcp('ghl_list_pipelines', { locationId }) as { pipelines?: unknown[] }
+      const pipelines = result?.pipelines ?? (Array.isArray(result) ? result : [])
 
       const display = pipelines.length > 0
         ? (pipelines as Array<{ name?: string; stages?: Array<{ name?: string }> }>).map(p =>
-            `📊 ${p.name}: ${(p.stages ?? []).map(s => s.name).join(' → ')}`
+            `Pipeline: ${p.name}: ${(p.stages ?? []).map(s => s.name).join(' -> ')}`
           ).join('\n')
         : 'No pipelines found.'
 
@@ -209,22 +221,13 @@ registerTool(
   },
   async (input, _ctx): Promise<ToolCallResult> => {
     try {
-      const res = await fetch(`${GHL_BASE}/conversations/messages`, {
-        method: 'POST',
-        headers: ghlHeaders(),
-        body: JSON.stringify({
-          type: input.type,
-          conversationId: input.conversationId,
-          message: input.message,
-        }),
+      const result = await callGhlMcp('ghl_send_message', {
+        type: input.type,
+        conversationId: input.conversationId,
+        message: input.message,
       })
 
-      if (!res.ok) {
-        const body = await res.text().catch(() => '')
-        throw new Error(`GHL send failed ${res.status}: ${body.slice(0, 200)}`)
-      }
-
-      return makeResult('ghl_send_message', input, true, await res.json(), `Message sent successfully via ${input.type}`)
+      return makeResult('ghl_send_message', input, true, result, `Message sent successfully via ${input.type}`)
     } catch (err) {
       return makeResult('ghl_send_message', input, false, null, err instanceof Error ? err.message : String(err))
     }
@@ -251,11 +254,16 @@ registerTool(
   },
   async (input, _ctx): Promise<ToolCallResult> => {
     try {
-      const locationId = input.locationId as string | undefined
+      const locationId = (input.locationId as string) ?? process.env.GHL_LOCATION_ID
       const limit = parseInt((input.limit as string) ?? '50', 10)
 
-      // Fetch recent conversations
-      const data = await ghlFetch(`/conversations/search?limit=${limit}&sortBy=last_message_date&sortOrder=desc`, locationId) as {
+      // Fetch recent conversations via MCP
+      const result = await callGhlMcp('ghl_search_conversations', {
+        locationId,
+        limit,
+        sortBy: 'last_message_date',
+        sortOrder: 'desc',
+      }) as {
         conversations?: Array<{
           id?: string
           contactName?: string
@@ -267,11 +275,17 @@ registerTool(
         }>
       }
 
-      const convos = data.conversations ?? []
+      const convos = result?.conversations ?? (Array.isArray(result) ? result as Array<{
+        id?: string
+        contactName?: string
+        lastMessageBody?: string
+        lastMessageDate?: string
+        lastMessageDirection?: string
+        unreadCount?: number
+        contactId?: string
+      }> : [])
 
       let unanswered = 0
-      let totalResponseTime = 0
-      let responseCount = 0
       const unansweredLeads: string[] = []
       const staleLeads: string[] = []
 
@@ -295,23 +309,23 @@ registerTool(
       }
 
       const lines = [
-        `📊 GHL Conversation Audit (${convos.length} conversations)`,
+        `GHL Conversation Audit (${convos.length} conversations)`,
         '',
-        `🔴 Unanswered leads: ${unanswered}`,
+        `Unanswered leads: ${unanswered}`,
       ]
 
       if (unansweredLeads.length > 0) {
-        lines.push(...unansweredLeads.slice(0, 10).map(l => `   • ${l}`))
+        lines.push(...unansweredLeads.slice(0, 10).map(l => `   - ${l}`))
       }
 
-      lines.push('', `⏰ Stale conversations (48h+): ${staleLeads.length}`)
+      lines.push('', `Stale conversations (48h+): ${staleLeads.length}`)
       if (staleLeads.length > 0) {
-        lines.push(...staleLeads.slice(0, 10).map(l => `   • ${l}`))
+        lines.push(...staleLeads.slice(0, 10).map(l => `   - ${l}`))
       }
 
       lines.push(
         '',
-        `📈 Summary:`,
+        `Summary:`,
         `   Total conversations: ${convos.length}`,
         `   Need immediate response: ${unanswered}`,
         `   Gone cold (48h+): ${staleLeads.length}`,
@@ -319,7 +333,7 @@ registerTool(
       )
 
       if (unanswered > 0) {
-        lines.push('', `⚡ Action: ${unanswered} leads are waiting for a response right now.`)
+        lines.push('', `Action: ${unanswered} leads are waiting for a response right now.`)
       }
 
       return makeResult('ghl_audit_conversations', input, true, {
