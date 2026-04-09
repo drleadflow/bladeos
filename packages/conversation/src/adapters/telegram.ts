@@ -27,12 +27,27 @@ export class TelegramAdapter implements ChannelAdapter<TelegramIncoming, string>
 
   async deliver(events: AsyncGenerator<ConversationEvent>, _context: DeliveryContext): Promise<string> {
     let responseText = ''
+    let deltaText = ''
+    let errorMessage = ''
+
     for await (const event of events) {
-      if (event.type === 'done') {
-        responseText = event.response
+      switch (event.type) {
+        case 'text_delta':
+          deltaText += event.text
+          break
+        case 'error':
+          if (!errorMessage) {
+            errorMessage = event.message
+          }
+          break
+        case 'done':
+          responseText = event.response
+          break
       }
     }
-    return this.formatResponse(responseText)
+
+    const bestEffortResponse = responseText || deltaText || errorMessage
+    return this.formatResponse(bestEffortResponse)
   }
 
   formatResponse(text: string): string {

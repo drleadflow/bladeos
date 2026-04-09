@@ -5,22 +5,22 @@ Update after each significant action. This enables coherence across
 context resets and compaction events.
 
 ## Current Task
-Package the current Blade checkpoint into a clean handoff, commit all current work, and preserve exact resume instructions.
+Audit in-flight terminal changes and track delivery pace against the world-class roadmap.
 
 ## Decisions Made
 - Keep the project moving toward a command-center / worker-control-plane architecture.
 - Prefer durable control-plane state over channel-specific or prompt-only fixes.
-- Record the resume state in-repo so the handoff is versioned with the code.
+- Record execution pace in-repo (`tasks/DELIVERY-TRACKER.md`) so active work can be audited quickly.
 
 ## Rejected Approaches
 - Do not rely on title-based conversation lookup for Telegram or other channels.
 - Do not fake worker controls that the runtime cannot actually honor.
 
 ## Active State
-Checkpoint documentation and commit packaging.
+Telegram reliability patch is in progress (adapter + bot fallback hardening + tests), with quality gates passing locally.
 
 ## Blockers
-- No Git remote is configured, so pushing to GitHub cannot happen until a remote repo URL is attached.
+No code blockers. Operational blocker: live Telegram bot must be restarted after merge to pick up runtime fix.
 
 ## Next Step
-Add the GitHub remote, push the checkpoint commit, then continue with interactive worker controls: log streaming, attach/send-input, and stronger interrupt semantics.
+Commit Telegram reliability patch, deploy/restart bot runtime, run live smoke test, then continue worker streaming + attach/send-input.

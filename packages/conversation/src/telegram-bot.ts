@@ -73,6 +73,21 @@ function cleanResponse(text: string): string {
   return cleaned
 }
 
+function toUserFacingFailure(rawResponse: string): string | undefined {
+  const normalized = rawResponse.trim()
+  if (!normalized) return undefined
+
+  if (
+    normalized === 'Agent loop completed without a result'
+    || normalized.startsWith('No API key configured for provider')
+    || normalized.startsWith('Stream ended without a message_done event')
+  ) {
+    return 'I understood your request, but the reply run ended before I could send a complete answer. Please try again.'
+  }
+
+  return undefined
+}
+
 function splitMessage(text: string): string[] {
   if (text.length <= TELEGRAM_MAX_MESSAGE_LENGTH) return [text]
 
@@ -203,8 +218,21 @@ async function runTelegramReply(params: {
     }
   )
 
+  const userFacingFailure = toUserFacingFailure(responseText)
+  if (userFacingFailure) {
+    recordLocalEvent({
+      chatId,
+      conversationId,
+      eventType: 'conversation_reply_failed',
+      summary: `Telegram reply failed: ${clip(responseText, 90)}`,
+      detail: { rawResponse: responseText, voice: sendVoiceReply },
+    })
+  }
+
   const cleaned = cleanResponse(
-    responseText || 'I processed your request but couldn\'t generate a response. Could you try rephrasing?'
+    userFacingFailure
+      || responseText
+      || 'I processed your request but couldn\'t generate a response. Could you try rephrasing?'
   )
 
   await sendResponse(bot, Number(chatId), cleaned)
