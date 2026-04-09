@@ -17,7 +17,7 @@ import {
   stopContainer,
   removeContainer,
 } from '@blade/docker-runner'
-import { jobs, jobLogs } from '@blade/db'
+import { jobs, jobLogs, workerSessions } from '@blade/db'
 import { logger } from '@blade/shared'
 import { runAgentLoop } from '../agent-loop.js'
 import { registerTool, getAllToolDefinitions, createToolScope, registerScopedTool, getScopedToolDefinitions, destroyToolScope } from '../tool-registry.js'
@@ -51,8 +51,78 @@ function updateStatus(
 ): void {
   jobs.updateStatus(jobId, status, extra)
   jobLogs.add(jobId, 'info', message)
+  syncWorkerSession(jobId, status, message, extra)
   onStatus?.(status, message)
   logger.info('Pipeline', `[${jobId}] ${status}: ${message}`)
+}
+
+function mapJobStatusToWorkerStatus(status: string): string {
+  if (status === 'queued') return 'queued'
+  if (['cloning', 'branching', 'container_starting'].includes(status)) return 'booting'
+  if (['coding', 'testing', 'pr_creating'].includes(status)) return 'active'
+  if (status === 'completed') return 'completed'
+  if (status === 'stopped') return 'stopped'
+  if (status === 'failed') return 'failed'
+  return 'active'
+}
+
+function syncWorkerSession(
+  jobId: string,
+  status: string,
+  message: string,
+  extra?: Record<string, unknown>,
+): void {
+  const runtime =
+    typeof extra?.containerName === 'string'
+      ? 'docker'
+      : typeof extra?.runtime === 'string'
+        ? String(extra.runtime)
+        : undefined
+
+  workerSessions.update(jobId, {
+    status: mapJobStatusToWorkerStatus(status),
+    runtime,
+    containerName:
+      typeof extra?.containerName === 'string'
+        ? String(extra.containerName)
+        : undefined,
+    latestSummary: message,
+    lastSeenAt: new Date().toISOString(),
+    completedAt:
+      status === 'completed' || status === 'failed' || status === 'stopped'
+        ? new Date().toISOString()
+        : undefined,
+  })
+}
+
+class WorkerStopRequestedError extends Error {
+  constructor(message = 'Stopped by operator') {
+    super(message)
+    this.name = 'WorkerStopRequestedError'
+  }
+}
+
+function isStopRequested(jobId: string): boolean {
+  const session = workerSessions.get(jobId)
+  if (!session?.metadataJson) return false
+
+  try {
+    const metadata = JSON.parse(session.metadataJson) as { control?: { requestedAction?: string } }
+    return metadata.control?.requestedAction === 'stop'
+  } catch {
+    return false
+  }
+}
+
+function throwIfStopRequested(jobId: string, onStatus?: (status: string, message: string) => void): void {
+  if (!isStopRequested(jobId)) return
+
+  workerSessions.clearRequestedAction(jobId)
+  updateStatus(jobId, 'stopped', 'Stopped by operator', {
+    error: 'Stopped by operator',
+    completedAt: new Date().toISOString(),
+  }, onStatus)
+  throw new WorkerStopRequestedError()
 }
 
 function runLocal(cmd: string, cwd: string): { stdout: string; stderr: string; exitCode: number } {
@@ -555,6 +625,7 @@ export async function runCodingPipeline(params: {
   } = params
 
   const branchName = `blade/${jobId}-${slugify(title)}`
+  const pipelineConversationId = `job-${jobId}`
   let repoDir: string | undefined
   let container: Awaited<ReturnType<typeof createContainer>> | undefined
   let useDocker = false
@@ -563,15 +634,20 @@ export async function runCodingPipeline(params: {
   try {
     // ── Step 1: Clone ──────────────────────────────────────────
     updateStatus(jobId, 'cloning', `Cloning ${repoUrl}`, undefined, onStatus)
+    throwIfStopRequested(jobId, onStatus)
     repoDir = cloneRepo(repoUrl)
     jobLogs.add(jobId, 'info', `Cloned to ${repoDir}`)
+    throwIfStopRequested(jobId, onStatus)
 
     // ── Step 2: Branch ─────────────────────────────────────────
     updateStatus(jobId, 'branching', `Creating branch ${branchName}`, { branch: branchName }, onStatus)
+    throwIfStopRequested(jobId, onStatus)
     createBranch(repoDir, branchName)
+    throwIfStopRequested(jobId, onStatus)
 
     // ── Step 3: Container / Local fallback ─────────────────────
     updateStatus(jobId, 'container_starting', 'Setting up execution environment', undefined, onStatus)
+    throwIfStopRequested(jobId, onStatus)
 
     const dockerAvailable = await isDockerAvailable()
     let adapter: ExecAdapter
@@ -582,15 +658,30 @@ export async function runCodingPipeline(params: {
       container = await createContainer(containerName, repoDir)
       await startContainer(container)
       jobs.updateStatus(jobId, 'container_starting', { containerName })
+      workerSessions.update(jobId, {
+        runtime: 'docker',
+        containerName,
+        conversationId: pipelineConversationId,
+        lastSeenAt: new Date().toISOString(),
+        latestSummary: `Docker sandbox ready: ${containerName}`,
+      })
       jobLogs.add(jobId, 'info', `Docker container started: ${containerName}`)
       adapter = createDockerAdapter(container)
     } else {
       jobLogs.add(jobId, 'info', 'Docker not available, using local execution')
+      workerSessions.update(jobId, {
+        runtime: 'local',
+        conversationId: pipelineConversationId,
+        lastSeenAt: new Date().toISOString(),
+        latestSummary: 'Worker running locally because Docker is unavailable.',
+      })
       adapter = createLocalAdapter(repoDir)
     }
+    throwIfStopRequested(jobId, onStatus)
 
     // ── Step 4: Coding with agent loop ─────────────────────────
     updateStatus(jobId, 'coding', 'Agent is coding the solution', undefined, onStatus)
+    throwIfStopRequested(jobId, onStatus)
 
     toolScopeId = createToolScope()
     registerCodingTools(adapter, toolScopeId)
@@ -600,7 +691,7 @@ export async function runCodingPipeline(params: {
 
     const context: ExecutionContext = {
       jobId,
-      conversationId: `job-${jobId}`,
+      conversationId: pipelineConversationId,
       workingDir: useDocker ? '/workspace' : repoDir,
       containerName: useDocker ? `blade-${jobId}` : undefined,
       repoUrl,
@@ -628,6 +719,15 @@ export async function runCodingPipeline(params: {
           success: result.success,
           durationMs: result.durationMs,
         })
+        workerSessions.update(jobId, {
+          conversationId: pipelineConversationId,
+          status: 'active',
+          lastSeenAt: new Date().toISOString(),
+          latestSummary: result.success
+            ? `Tool completed: ${result.toolName}`
+            : `Tool failed: ${result.toolName}`,
+        })
+        throwIfStopRequested(jobId, onStatus)
 
         // Incremental commit after file writes
         if (result.success && result.toolName === 'write_file' && repoDir) {
@@ -640,6 +740,7 @@ export async function runCodingPipeline(params: {
     })
 
     jobLogs.add(jobId, 'info', `Agent completed: ${agentResult.totalToolCalls} tool calls, $${agentResult.totalCost.toFixed(4)} cost`)
+    throwIfStopRequested(jobId, onStatus)
     jobs.updateStatus(jobId, 'coding', {
       totalCost: agentResult.totalCost,
       totalToolCalls: agentResult.totalToolCalls,
@@ -648,6 +749,7 @@ export async function runCodingPipeline(params: {
 
     // ── Step 5: Testing ────────────────────────────────────────
     updateStatus(jobId, 'testing', 'Running tests', undefined, onStatus)
+    throwIfStopRequested(jobId, onStatus)
 
     const testCommand = detectTestCommand(repoDir)
     let testsPassed = false
@@ -656,9 +758,20 @@ export async function runCodingPipeline(params: {
     let lastTestOutput = ''
 
     for (let cycle = 0; cycle <= maxFixCycles; cycle++) {
+      throwIfStopRequested(jobId, onStatus)
+      workerSessions.update(jobId, {
+        conversationId: pipelineConversationId,
+        status: 'active',
+        lastSeenAt: new Date().toISOString(),
+        latestSummary: cycle === 0
+          ? `Running test suite: ${testCommand}`
+          : `Re-running tests after fix cycle ${cycle}`,
+      })
+
       const testResult = useDocker && container
         ? await execInContainer(container, ['sh', '-c', testCommand])
         : runLocal(testCommand, repoDir)
+      throwIfStopRequested(jobId, onStatus)
 
       lastTestOutput = [testResult.stdout, testResult.stderr].filter(Boolean).join('\n')
 
@@ -681,6 +794,12 @@ export async function runCodingPipeline(params: {
 
       // Feed test failures back to the agent for a fix attempt
       jobLogs.add(jobId, 'info', `Tests failed (cycle ${cycle + 1}/${maxFixCycles}), asking agent to fix`)
+      workerSessions.update(jobId, {
+        conversationId: pipelineConversationId,
+        status: 'active',
+        lastSeenAt: new Date().toISOString(),
+        latestSummary: `Tests failed; starting fix cycle ${cycle + 1}`,
+      })
       const errorOutput = lastTestOutput.slice(0, 4000)
 
       const fixMessage: AgentMessage = {
@@ -698,6 +817,15 @@ export async function runCodingPipeline(params: {
           jobLogs.add(jobId, 'debug', `Fix tool: ${result.toolName}`, {
             success: result.success,
           })
+          workerSessions.update(jobId, {
+            conversationId: pipelineConversationId,
+            status: 'active',
+            lastSeenAt: new Date().toISOString(),
+            latestSummary: result.success
+              ? `Fix cycle tool completed: ${result.toolName}`
+              : `Fix cycle tool failed: ${result.toolName}`,
+          })
+          throwIfStopRequested(jobId, onStatus)
 
           // Incremental commit after fix file writes
           if (result.success && result.toolName === 'write_file' && repoDir) {
@@ -710,6 +838,7 @@ export async function runCodingPipeline(params: {
       })
 
       fixResults.push(fixResult)
+      throwIfStopRequested(jobId, onStatus)
 
       jobs.updateStatus(jobId, 'testing', {
         totalCost: agentResult.totalCost + fixResult.totalCost,
@@ -719,9 +848,11 @@ export async function runCodingPipeline(params: {
 
     // ── Step 6: Create PR ──────────────────────────────────────
     updateStatus(jobId, 'pr_creating', 'Committing changes and creating PR', undefined, onStatus)
+    throwIfStopRequested(jobId, onStatus)
 
     const commitMessage = `feat: ${title}\n\nImplemented by Blade Super Agent.\n\n${description}`
     commitAndPush(repoDir, commitMessage, branchName, githubToken)
+    throwIfStopRequested(jobId, onStatus)
 
     const { owner, repo } = parseRepoUrl(repoUrl)
     const prBody = buildPRBody(repoDir, title, agentResult, testsPassed)
@@ -735,6 +866,7 @@ export async function runCodingPipeline(params: {
       base: baseBranch,
       githubToken,
     })
+    throwIfStopRequested(jobId, onStatus)
 
     // Post detailed agent log as a PR comment
     try {
@@ -769,6 +901,13 @@ export async function runCodingPipeline(params: {
       totalCost: agentResult.totalCost,
     }
   } catch (err) {
+    if (err instanceof WorkerStopRequestedError) {
+      return {
+        prUrl: '',
+        prNumber: 0,
+        totalCost: 0,
+      }
+    }
     const errorMessage = err instanceof Error ? err.message : String(err)
     updateStatus(jobId, 'failed', errorMessage, { error: errorMessage }, onStatus)
     throw err

@@ -10,14 +10,31 @@ export interface Message {
   cost?: number
 }
 
+export interface TraceEvent {
+  id: string
+  type: 'status' | 'conversation_started' | 'tool_call' | 'turn' | 'done' | 'error'
+  title: string
+  detail?: string
+  tone: 'neutral' | 'blue' | 'cyan' | 'emerald' | 'amber' | 'rose'
+  timestamp: number
+  iteration?: number
+  costSoFar?: number
+  durationMs?: number
+  toolName?: string
+  stopReason?: string
+}
+
 export interface ChatStore {
   messages: Message[]
+  traceEvents: TraceEvent[]
   conversationId: string | null
   isStreaming: boolean
   totalCost: number
   addMessage: (msg: Message) => void
   updateLastAssistant: (content: string) => void
   appendToolCall: (tc: { name: string; display: string; success: boolean }) => void
+  prependTraceEvent: (event: TraceEvent) => void
+  setTraceEvents: (events: TraceEvent[]) => void
   setStreaming: (v: boolean) => void
   setConversationId: (id: string) => void
   addCost: (usd: number) => void
@@ -26,6 +43,7 @@ export interface ChatStore {
 
 export const useChatStore = create<ChatStore>((set) => ({
   messages: [],
+  traceEvents: [],
   conversationId: null,
   isStreaming: false,
   totalCost: 0,
@@ -59,6 +77,13 @@ export const useChatStore = create<ChatStore>((set) => ({
       return { messages }
     }),
 
+  prependTraceEvent: (event) =>
+    set((state) => ({
+      traceEvents: [event, ...state.traceEvents],
+    })),
+
+  setTraceEvents: (events) => set({ traceEvents: events }),
+
   setStreaming: (v) => set({ isStreaming: v }),
 
   setConversationId: (id) => set({ conversationId: id }),
@@ -71,6 +96,7 @@ export const useChatStore = create<ChatStore>((set) => ({
   clearMessages: () =>
     set({
       messages: [],
+      traceEvents: [],
       conversationId: null,
       totalCost: 0,
     }),

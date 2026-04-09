@@ -21,3 +21,16 @@ CREATE TABLE IF NOT EXISTS handoffs (
   completed_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_handoffs_to ON handoffs(to_employee, status);
+
+-- Daily priorities
+CREATE TABLE IF NOT EXISTS daily_priorities (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  description TEXT,
+  emoji TEXT DEFAULT '⚡',
+  urgency TEXT DEFAULT 'normal' CHECK(urgency IN ('urgent','important','normal')),
+  completed INTEGER NOT NULL DEFAULT 0,
+  date TEXT NOT NULL DEFAULT (date('now')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_priorities_date ON daily_priorities(date);

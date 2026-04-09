@@ -39,10 +39,10 @@ function ToolCallCard({
 }) {
   return (
     <div
-      className={`mt-2 inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs ${
+      className={`mt-2 inline-flex items-center gap-2 rounded-2xl border px-3 py-2 text-xs ${
         tc.success
-          ? 'border-green-700 bg-green-950/50 text-green-400'
-          : 'border-red-700 bg-red-950/50 text-red-400'
+          ? 'border-emerald-400/20 bg-emerald-400/10 text-emerald-300'
+          : 'border-red-400/20 bg-red-400/10 text-red-300'
       }`}
     >
       <span className="font-mono font-medium">{tc.name}</span>
@@ -68,32 +68,73 @@ function ToolCallCard({
 export function MessageList({ messages }: MessageListProps) {
   if (messages.length === 0) {
     return (
-      <div className="flex flex-1 items-center justify-center">
-        <div className="text-center">
-          <h2 className="text-2xl font-semibold text-zinc-300">Blade Super Agent</h2>
-          <p className="mt-2 text-sm text-zinc-500">How can I help you today?</p>
+      <div className="grid min-h-[52vh] place-items-center">
+        <div className="w-full max-w-4xl rounded-[2rem] border border-white/10 bg-white/[0.04] p-8 shadow-[0_30px_80px_rgba(0,0,0,0.35)] sm:p-10">
+          <div className="flex flex-wrap items-start justify-between gap-8">
+            <div className="max-w-2xl">
+              <p className="text-[11px] font-medium uppercase tracking-[0.24em] text-cyan-300/80">
+                Ready for work
+              </p>
+              <h2 className="mt-4 text-4xl font-semibold tracking-tight text-zinc-50">
+                Run your company from one conversation.
+              </h2>
+              <p className="mt-4 text-base leading-7 text-zinc-400">
+                Ask Blade to investigate, coordinate, remember, summarize, or ship. It should feel like briefing a sharp operator, not babysitting a chatbot.
+              </p>
+            </div>
+
+            <div className="grid min-w-[240px] gap-3 sm:w-[280px]">
+              <div className="rounded-2xl border border-white/10 bg-zinc-950/60 p-4">
+                <p className="text-[11px] uppercase tracking-[0.2em] text-zinc-500">
+                  Best prompts
+                </p>
+                <p className="mt-2 text-sm text-zinc-300">
+                  “Review what changed today and tell me what needs attention.”
+                </p>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-zinc-950/60 p-4">
+                <p className="text-[11px] uppercase tracking-[0.2em] text-zinc-500">
+                  Strongest use
+                </p>
+                <p className="mt-2 text-sm text-zinc-300">
+                  Hand off a task, ask for the next move, or have Blade coordinate the work across agents.
+                </p>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     )
   }
 
   return (
-    <div className="flex flex-col gap-4 px-4 py-6">
+    <div className="flex flex-col gap-5 py-2">
       {messages.map((msg) => (
         <div
           key={msg.id}
           className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
         >
           <div
-            className={`max-w-[80%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${
+            className={`max-w-[85%] rounded-[1.6rem] border px-5 py-4 text-sm leading-7 shadow-[0_24px_60px_rgba(0,0,0,0.2)] ${
               msg.role === 'user'
-                ? 'bg-blue-600 text-white'
-                : 'bg-zinc-800 text-zinc-100'
+                ? 'border-cyan-300/20 bg-gradient-to-br from-cyan-400 via-sky-500 to-blue-600 text-white'
+                : 'border-white/10 bg-white/[0.05] text-zinc-100 backdrop-blur-sm'
             }`}
           >
+            <div className="mb-3 flex items-center gap-2">
+              <span
+                className={`rounded-full px-2.5 py-1 text-[11px] font-medium uppercase tracking-[0.18em] ${
+                  msg.role === 'user'
+                    ? 'bg-white/15 text-white/90'
+                    : 'bg-cyan-400/10 text-cyan-300'
+                }`}
+              >
+                {msg.role === 'user' ? 'You' : 'Blade'}
+              </span>
+            </div>
             <div>{formatContent(msg.content)}</div>
             {msg.toolCalls && msg.toolCalls.length > 0 && (
-              <div className="mt-1 flex flex-wrap gap-2">
+              <div className="mt-3 flex flex-wrap gap-2">
                 {msg.toolCalls.map((tc, i) => (
                   <ToolCallCard key={i} tc={tc} />
                 ))}

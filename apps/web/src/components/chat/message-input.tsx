@@ -41,8 +41,17 @@ export function MessageInput({ onSend, disabled }: MessageInputProps) {
   }, [])
 
   return (
-    <div className="border-t border-zinc-800 bg-zinc-900 p-4">
-      <div className="mx-auto flex max-w-3xl items-end gap-3">
+    <div className="rounded-[1.75rem] border border-white/10 bg-white/[0.05] p-3 shadow-[0_20px_60px_rgba(0,0,0,0.28)] backdrop-blur-xl">
+      <div className="flex items-end gap-3">
+        <div className="flex-1">
+          <div className="mb-2 flex items-center gap-2 px-2">
+            <span className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-2 py-1 text-[11px] font-medium uppercase tracking-[0.18em] text-cyan-300">
+              Prompt
+            </span>
+            <span className="text-xs text-zinc-500">
+              Ask for action, context, decisions, or execution.
+            </span>
+          </div>
         <textarea
           ref={textareaRef}
           value={value}
@@ -51,16 +60,17 @@ export function MessageInput({ onSend, disabled }: MessageInputProps) {
             handleInput()
           }}
           onKeyDown={handleKeyDown}
-          placeholder="Message Blade..."
+          placeholder="Tell Blade what matters, what changed, or what needs to get done..."
           disabled={disabled}
           rows={1}
-          className="flex-1 resize-none rounded-xl border border-zinc-700 bg-zinc-800 px-4 py-3 text-sm text-zinc-100 placeholder-zinc-500 outline-none transition-colors focus:border-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+          className="min-h-[72px] w-full resize-none rounded-[1.4rem] border border-white/10 bg-zinc-950/70 px-5 py-4 text-sm text-zinc-100 placeholder-zinc-500 outline-none transition-colors focus:border-cyan-400/50 disabled:cursor-not-allowed disabled:opacity-50"
           style={{ maxHeight: '120px' }}
         />
+        </div>
         <button
           onClick={handleSend}
           disabled={disabled || !value.trim()}
-          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-blue-600 text-white transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-40"
+          className="flex h-14 w-14 shrink-0 items-center justify-center rounded-[1.2rem] bg-gradient-to-br from-cyan-300 via-sky-400 to-blue-600 text-zinc-950 transition-transform duration-200 hover:scale-[1.02] disabled:cursor-not-allowed disabled:opacity-40"
           aria-label="Send message"
         >
           <svg

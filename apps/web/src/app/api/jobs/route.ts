@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server'
-import { initializeDb, jobs } from '@blade/db'
+import { initializeDb, jobs, workerSessions } from '@blade/db'
 import { logger } from '@blade/shared'
 import { requireAuth, unauthorizedResponse } from '@/lib/auth'
 
@@ -51,6 +51,23 @@ export async function POST(req: NextRequest): Promise<Response> {
       repoUrl,
       branch: branchName,
       baseBranch: baseBranch ?? 'main',
+    })
+
+    workerSessions.create({
+      id: result.id,
+      jobId: result.id,
+      name: title,
+      status: 'queued',
+      runtime: 'pending',
+      repoUrl,
+      branch: branchName,
+      conversationId: `job-${result.id}`,
+      entrypoint: 'coding-pipeline',
+      latestSummary: 'Worker queued and waiting to start.',
+      metadata: {
+        source: 'jobs',
+        baseBranch: baseBranch ?? 'main',
+      },
     })
 
     return Response.json({ success: true, data: result }, { status: 201 })

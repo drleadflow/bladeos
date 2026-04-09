@@ -4,7 +4,8 @@ import './orchestration/builtin-workflows.js'
 
 // Core exports
 export { runAgentLoop } from './agent-loop.js'
-export { registerTool, getTool, getAllToolDefinitions, getToolsByCategory, executeTool, clearRegistry, createToolScope, registerScopedTool, getScopedToolDefinitions, destroyToolScope } from './tool-registry.js'
+export { runConversationReply, extractBestResponseText } from './chat/reply.js'
+export { registerTool, getTool, getAllToolDefinitions, getToolsByCategory, executeTool, clearRegistry, createToolScope, createFilteredScope, registerScopedTool, getScopedToolDefinitions, destroyToolScope } from './tool-registry.js'
 export { callModel, streamModel, resolveModelConfig, resolveSmartModelConfig } from './model-provider.js'
 export type { TaskComplexity } from './model-provider.js'
 export { calculateCost, formatCost, isWithinBudget } from './cost-tracker.js'
@@ -41,7 +42,11 @@ export {
   addToImprovementQueue, processImprovementQueue, detectToolMention,
   detectBuyerArchetype, detectMotivation, detectEmotionalState, getClarityCompass, getValueEquation,
   requestHandoff, getHandoffsForEmployee, acceptHandoff, completeHandoff, buildCollaborationContext, clearHandoffs,
+  runProactiveBehavior, scheduleEmployeeBehaviors, stopEmployeeBehaviors,
 } from './employees/index.js'
+export {
+  loadEmployeeDefinitions, getEmployeeDefinition, getAllEmployeeDefinitions, clearDefinitionCache,
+} from './employees/yaml-loader.js'
 export type {
   Archetype, Pillar, OnboardingQuestion, ScorecardMetric, ProactiveBehavior,
   EmployeeDefinition, ActiveEmployee, ScorecardEntry, Notification, HandoffRequest,
@@ -93,6 +98,14 @@ export {
 } from './intelligence/index.js'
 export type { Prediction, EmotionalContext } from './intelligence/index.js'
 
+// Execution API (v2 boundary)
+export { createExecutionAPI } from './execution-api.js'
+export type { ExecutionAPI, AgentStreamEvent, ModelStreamEvent } from './execution-api.js'
+
+// Event Channel utility
+export { createEventChannel } from './utils/event-channel.js'
+export type { EventChannel } from './utils/event-channel.js'
+
 // Types
 export type {
   AgentId, JobId, SkillId, MemoryId, ConversationId,
@@ -106,4 +119,6 @@ export type {
   SkillSource, SkillExample, Skill,
   CostEntry, CostSummary,
   Conversation, StoredMessage,
+  ChannelType, ConversationRequest, ConversationEvent, ConversationState,
+  CodingPipelineOptions, CodingPipelineResult,
 } from './types.js'

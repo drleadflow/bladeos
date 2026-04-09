@@ -1,11 +1,27 @@
 import { NextRequest } from 'next/server'
-import { initializeDb, conversations, messages, costEntries } from '@blade/db'
-import { runAgentLoop, getAllToolDefinitions, loadPersonality, buildMemoryAugmentedPrompt, calculateCost, resolveSmartModelConfig } from '@blade/core'
-import type { AgentMessage, ExecutionContext, AgentLoopOptions, AgentTurn, ToolCallResult } from '@blade/core'
-import { logger, loadConfig } from '@blade/shared'
+import { initializeDb, messages } from '@blade/db'
+import { createConversationEngine, WebSSEAdapter } from '@blade/conversation'
+import { createExecutionAPI, loadPersonality, retrieveRelevant } from '@blade/core'
+import { logger } from '@blade/shared'
 import { requireAuth, unauthorizedResponse } from '@/lib/auth'
 
 export const runtime = 'nodejs'
+
+const executionApi = createExecutionAPI()
+const conversationEngine = createConversationEngine(executionApi, {
+  retrieveMemories: async (query: string) => {
+    const ranked = retrieveRelevant(query, 8)
+    if (ranked.length === 0) return ''
+
+    return ranked
+      .map((memory, index) => {
+        const tags = memory.tags.length > 0 ? ` [tags: ${memory.tags.join(', ')}]` : ''
+        return `${index + 1}. (${memory.type}) ${memory.content}${tags}`
+      })
+      .join('\n')
+  },
+})
+const webAdapter = new WebSSEAdapter()
 
 export async function GET(req: NextRequest): Promise<Response> {
   const auth = requireAuth(req)
@@ -39,9 +55,14 @@ export async function POST(req: NextRequest): Promise<Response> {
 
   try {
     const body = await req.json()
-    const { message, conversationId: existingConversationId } = body as {
+    const {
+      message,
+      conversationId: existingConversationId,
+      employeeId,
+    } = body as {
       message: string
       conversationId?: string
+      employeeId?: string
     }
 
     if (!message || typeof message !== 'string') {
@@ -52,138 +73,20 @@ export async function POST(req: NextRequest): Promise<Response> {
     }
 
     initializeDb()
-
-    const conversation = existingConversationId
-      ? conversations.get(existingConversationId) ?? conversations.create(message.slice(0, 100))
-      : conversations.create(message.slice(0, 100))
-
-    const conversationId = conversation.id
-
-    // Record user message
-    messages.create({
-      conversationId,
-      role: 'user',
-      content: message,
-    })
-
-    // Load prior messages for context
-    const priorMessages = messages.listByConversation(conversationId)
-    const agentMessages: AgentMessage[] = priorMessages.map((m) => ({
-      role: m.role as 'user' | 'assistant',
-      content: m.content,
-    }))
-
-    const config = loadConfig()
     const personality = loadPersonality()
-    const systemPrompt = buildMemoryAugmentedPrompt(
-      personality ? `${personality}\n\n${BASE_SYSTEM_PROMPT}` : BASE_SYSTEM_PROMPT,
-      message
-    )
-
-    // Use smart routing for model selection: if user has not set an explicit
-    // model in config, let resolveSmartModelConfig pick the best provider
-    // (OpenRouter when available, saving the Claude subscription for heavy tasks).
-    const smartConfig = resolveSmartModelConfig('standard')
-    const modelId = config.defaultModel || smartConfig.modelId
-
-    const context: ExecutionContext = {
-      conversationId,
+    const request = webAdapter.parseIncoming({
+      message,
+      conversationId: existingConversationId,
       userId: 'web-user',
-      modelId,
-      maxIterations: config.maxIterations,
-      costBudget: config.costBudget,
-    }
-
-    const tools = getAllToolDefinitions()
-    const encoder = new TextEncoder()
-
-    const stream = new ReadableStream({
-      async start(controller) {
-        const sendEvent = (event: string, data: unknown): void => {
-          const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`
-          controller.enqueue(encoder.encode(payload))
-        }
-
-        try {
-          const options: AgentLoopOptions = {
-            systemPrompt: systemPrompt,
-            messages: agentMessages,
-            tools,
-            context,
-            streaming: true,
-            onTextDelta(text: string) {
-              sendEvent('text', { conversationId, text })
-            },
-            onToolCall(result: ToolCallResult) {
-              sendEvent('tool_call', {
-                conversationId,
-                toolName: result.toolName,
-                input: result.input,
-                success: result.success,
-                display: result.display,
-                durationMs: result.durationMs,
-              })
-            },
-            onTurn(turn: AgentTurn) {
-              sendEvent('turn', {
-                conversationId,
-                iteration: turn.iteration,
-                stopReason: turn.response.stopReason,
-                costSoFar: turn.costSoFar,
-              })
-            },
-          }
-
-          const result = await runAgentLoop(options)
-
-          // Record assistant message in DB
-          messages.create({
-            conversationId,
-            role: 'assistant',
-            content: result.finalResponse,
-            model: context.modelId,
-            inputTokens: result.turns.reduce((sum, t) => sum + t.response.inputTokens, 0),
-            outputTokens: result.turns.reduce((sum, t) => sum + t.response.outputTokens, 0),
-          })
-
-          // Record cost entry
-          const totalInputTokens = result.turns.reduce((sum, t) => sum + t.response.inputTokens, 0)
-          const totalOutputTokens = result.turns.reduce((sum, t) => sum + t.response.outputTokens, 0)
-
-          if (result.totalCost > 0) {
-            const costBreakdown = calculateCost(context.modelId, totalInputTokens, totalOutputTokens)
-            costEntries.record({
-              model: context.modelId,
-              inputTokens: totalInputTokens,
-              outputTokens: totalOutputTokens,
-              inputCostUsd: costBreakdown.inputCostUsd,
-              outputCostUsd: costBreakdown.outputCostUsd,
-              totalCostUsd: result.totalCost,
-              conversationId,
-            })
-          }
-
-          // Update conversation title if it was just created
-          if (!existingConversationId && result.finalResponse) {
-            const title = result.finalResponse.slice(0, 100)
-            conversations.updateTitle(conversationId, title)
-          }
-
-          sendEvent('done', {
-            conversationId,
-            finalResponse: result.finalResponse,
-            totalCost: result.totalCost,
-            totalToolCalls: result.totalToolCalls,
-            stopReason: result.stopReason,
-          })
-        } catch (error: unknown) {
-          const errorMessage = error instanceof Error ? error.message : 'Agent loop failed'
-          logger.error('Chat', `Agent loop error: ${errorMessage} (conv: ${conversationId})`)
-          sendEvent('error', { conversationId, error: errorMessage })
-        } finally {
-          controller.close()
-        }
-      },
+      employeeId,
+    })
+    const events = conversationEngine.reply({
+      ...request,
+      systemPromptOverride: personality ? `${personality}\n\n${BASE_SYSTEM_PROMPT}` : BASE_SYSTEM_PROMPT,
+    })
+    const stream = await webAdapter.deliver(events, {
+      destination: null,
+      conversationId: existingConversationId ?? '',
     })
 
     return new Response(stream, {

@@ -26,9 +26,25 @@ export function getDb(dbPath?: string): Database.Database {
 export function initializeDb(dbPath?: string): Database.Database {
   const db = getDb(dbPath)
 
-  const migrationFiles = ['0001_init.sql', '0002_employees.sql', '0003_documents.sql', '0004_gamification.sql', '0005_evolution.sql', '0006_workflow_runs.sql']
+  // Create migration tracking table
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      filename TEXT NOT NULL UNIQUE,
+      applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `)
+
+  const migrationFiles = ['0001_init.sql', '0002_employees.sql', '0003_documents.sql', '0004_gamification.sql', '0005_evolution.sql', '0006_workflow_runs.sql', '0007_control_plane.sql', '0008_worker_sessions.sql', '0009_channel_links.sql']
+
+  const applied = new Set(
+    (db.prepare('SELECT filename FROM schema_migrations').all() as { filename: string }[])
+      .map(r => r.filename)
+  )
 
   for (const file of migrationFiles) {
+    if (applied.has(file)) continue
+
     const migrationPath = join(__dirname, '..', 'src', 'migrations', file)
 
     let sql: string
@@ -45,6 +61,7 @@ export function initializeDb(dbPath?: string): Database.Database {
     }
 
     db.exec(sql)
+    db.prepare('INSERT INTO schema_migrations (filename) VALUES (?)').run(file)
   }
 
   return db

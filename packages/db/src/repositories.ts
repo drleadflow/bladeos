@@ -107,12 +107,21 @@ export const jobs = {
   },
 
   updateStatus(id: string, status: string, extra?: Record<string, unknown>): void {
+    const ALLOWED_COLUMNS = new Set([
+      'container_name', 'pr_url', 'pr_number', 'agent_model',
+      'total_cost_usd', 'total_tool_calls', 'total_iterations',
+      'error', 'completed_at',
+    ])
+
     const sets = ['status = ?', 'updated_at = ?']
     const values: unknown[] = [status, now()]
 
     if (extra) {
       for (const [key, value] of Object.entries(extra)) {
         const col = key.replace(/([A-Z])/g, '_$1').toLowerCase()
+        if (!ALLOWED_COLUMNS.has(col)) {
+          throw new Error(`jobs.updateStatus: column "${col}" is not in the allowed list`)
+        }
         sets.push(`${col} = ?`)
         values.push(value)
       }
@@ -140,8 +149,307 @@ export const jobLogs = {
 }
 
 // ============================================================
+// WORKER SESSIONS
+// ============================================================
+
+export const workerSessions = {
+  create(params: {
+    id?: string
+    jobId?: string
+    name: string
+    workerType?: string
+    runtime?: string
+    status?: string
+    repoUrl?: string
+    branch?: string
+    containerName?: string
+    conversationId?: string
+    entrypoint?: string
+    latestSummary?: string
+    metadata?: unknown
+    startedAt?: string
+    completedAt?: string
+  }): { id: string } {
+    const id = params.id ?? uuid()
+    const ts = now()
+    db().prepare(
+      `INSERT INTO worker_sessions (
+        id, job_id, name, worker_type, runtime, status, repo_url, branch, container_name,
+        conversation_id, entrypoint, latest_summary, metadata_json, last_seen_at,
+        started_at, completed_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      id,
+      params.jobId ?? null,
+      params.name,
+      params.workerType ?? 'claude_code',
+      params.runtime ?? 'pending',
+      params.status ?? 'queued',
+      params.repoUrl ?? null,
+      params.branch ?? null,
+      params.containerName ?? null,
+      params.conversationId ?? null,
+      params.entrypoint ?? null,
+      params.latestSummary ?? null,
+      JSON.stringify(params.metadata ?? {}),
+      ts,
+      params.startedAt ?? null,
+      params.completedAt ?? null,
+      ts,
+      ts
+    )
+    return { id }
+  },
+
+  get(id: string) {
+    return db().prepare(
+      `SELECT id, job_id as jobId, name, worker_type as workerType, runtime, status,
+       repo_url as repoUrl, branch, container_name as containerName,
+       conversation_id as conversationId, entrypoint, latest_summary as latestSummary,
+       metadata_json as metadataJson, last_seen_at as lastSeenAt,
+       started_at as startedAt, completed_at as completedAt,
+       created_at as createdAt, updated_at as updatedAt
+       FROM worker_sessions WHERE id = ?`
+    ).get(id) as {
+      id: string
+      jobId: string | null
+      name: string
+      workerType: string
+      runtime: string
+      status: string
+      repoUrl: string | null
+      branch: string | null
+      containerName: string | null
+      conversationId: string | null
+      entrypoint: string | null
+      latestSummary: string | null
+      metadataJson: string | null
+      lastSeenAt: string | null
+      startedAt: string | null
+      completedAt: string | null
+      createdAt: string
+      updatedAt: string
+    } | undefined
+  },
+
+  findByJob(jobId: string) {
+    return db().prepare(
+      `SELECT id, job_id as jobId, name, worker_type as workerType, runtime, status,
+       repo_url as repoUrl, branch, container_name as containerName,
+       conversation_id as conversationId, entrypoint, latest_summary as latestSummary,
+       metadata_json as metadataJson, last_seen_at as lastSeenAt,
+       started_at as startedAt, completed_at as completedAt,
+       created_at as createdAt, updated_at as updatedAt
+       FROM worker_sessions WHERE job_id = ?`
+    ).get(jobId) as {
+      id: string
+      jobId: string | null
+      name: string
+      workerType: string
+      runtime: string
+      status: string
+      repoUrl: string | null
+      branch: string | null
+      containerName: string | null
+      conversationId: string | null
+      entrypoint: string | null
+      latestSummary: string | null
+      metadataJson: string | null
+      lastSeenAt: string | null
+      startedAt: string | null
+      completedAt: string | null
+      createdAt: string
+      updatedAt: string
+    } | undefined
+  },
+
+  list(limit = 50) {
+    return db().prepare(
+      `SELECT id, job_id as jobId, name, worker_type as workerType, runtime, status,
+       repo_url as repoUrl, branch, container_name as containerName,
+       conversation_id as conversationId, entrypoint, latest_summary as latestSummary,
+       metadata_json as metadataJson, last_seen_at as lastSeenAt,
+       started_at as startedAt, completed_at as completedAt,
+       created_at as createdAt, updated_at as updatedAt
+       FROM worker_sessions ORDER BY updated_at DESC LIMIT ?`
+    ).all(limit) as {
+      id: string
+      jobId: string | null
+      name: string
+      workerType: string
+      runtime: string
+      status: string
+      repoUrl: string | null
+      branch: string | null
+      containerName: string | null
+      conversationId: string | null
+      entrypoint: string | null
+      latestSummary: string | null
+      metadataJson: string | null
+      lastSeenAt: string | null
+      startedAt: string | null
+      completedAt: string | null
+      createdAt: string
+      updatedAt: string
+    }[]
+  },
+
+  update(id: string, params: {
+    name?: string
+    runtime?: string
+    status?: string
+    repoUrl?: string | null
+    branch?: string | null
+    containerName?: string | null
+    conversationId?: string | null
+    entrypoint?: string | null
+    latestSummary?: string | null
+    metadata?: unknown
+    lastSeenAt?: string | null
+    startedAt?: string | null
+    completedAt?: string | null
+  }): void {
+    const columnMap: Record<string, string> = {
+      name: 'name',
+      runtime: 'runtime',
+      status: 'status',
+      repoUrl: 'repo_url',
+      branch: 'branch',
+      containerName: 'container_name',
+      conversationId: 'conversation_id',
+      entrypoint: 'entrypoint',
+      latestSummary: 'latest_summary',
+      metadata: 'metadata_json',
+      lastSeenAt: 'last_seen_at',
+      startedAt: 'started_at',
+      completedAt: 'completed_at',
+    }
+
+    const sets: string[] = []
+    const values: unknown[] = []
+
+    for (const [key, value] of Object.entries(params)) {
+      const column = columnMap[key]
+      if (!column) continue
+      sets.push(`${column} = ?`)
+      values.push(key === 'metadata' ? JSON.stringify(value ?? {}) : value ?? null)
+    }
+
+    if (sets.length === 0) return
+
+    sets.push('updated_at = ?')
+    values.push(now())
+    values.push(id)
+
+    db().prepare(`UPDATE worker_sessions SET ${sets.join(', ')} WHERE id = ?`).run(...values)
+  },
+
+  requestAction(id: string, action: string, requestedBy = 'operator'): void {
+    const current = workerSessions.get(id)
+    const metadata = current?.metadataJson ? JSON.parse(current.metadataJson) as Record<string, unknown> : {}
+    const control = (metadata.control && typeof metadata.control === 'object')
+      ? metadata.control as Record<string, unknown>
+      : {}
+
+    workerSessions.update(id, {
+      metadata: {
+        ...metadata,
+        control: {
+          ...control,
+          requestedAction: action,
+          requestedBy,
+          requestedAt: now(),
+        },
+      },
+      lastSeenAt: now(),
+    })
+  },
+
+  clearRequestedAction(id: string): void {
+    const current = workerSessions.get(id)
+    const metadata = current?.metadataJson ? JSON.parse(current.metadataJson) as Record<string, unknown> : {}
+    if (!metadata.control || typeof metadata.control !== 'object') {
+      return
+    }
+
+    const control = { ...(metadata.control as Record<string, unknown>) }
+    delete control.requestedAction
+    delete control.requestedBy
+    delete control.requestedAt
+
+    workerSessions.update(id, {
+      metadata: {
+        ...metadata,
+        control,
+      },
+      lastSeenAt: now(),
+    })
+  },
+}
+
+// ============================================================
+// CHANNEL LINKS
+// ============================================================
+
+export const channelLinks = {
+  upsert(params: {
+    conversationId: string
+    channel: string
+    channelId: string
+    metadata?: unknown
+  }): void {
+    db().prepare(
+      `INSERT INTO channel_links (conversation_id, channel, channel_id, metadata_json, linked_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(channel, channel_id) DO UPDATE SET
+         conversation_id = excluded.conversation_id,
+         metadata_json = excluded.metadata_json,
+         linked_at = excluded.linked_at`
+    ).run(
+      params.conversationId,
+      params.channel,
+      params.channelId,
+      JSON.stringify(params.metadata ?? {}),
+      now()
+    )
+  },
+
+  findConversation(channel: string, channelId: string): string | undefined {
+    const row = db().prepare(
+      'SELECT conversation_id as conversationId FROM channel_links WHERE channel = ? AND channel_id = ?'
+    ).get(channel, channelId) as { conversationId: string } | undefined
+
+    return row?.conversationId
+  },
+
+  listByConversation(conversationId: string) {
+    return db().prepare(
+      `SELECT conversation_id as conversationId, channel, channel_id as channelId,
+       metadata_json as metadataJson, linked_at as linkedAt
+       FROM channel_links WHERE conversation_id = ? ORDER BY linked_at ASC`
+    ).all(conversationId) as {
+      conversationId: string
+      channel: string
+      channelId: string
+      metadataJson: string | null
+      linkedAt: string
+    }[]
+  },
+}
+
+// ============================================================
 // MEMORIES
 // ============================================================
+
+function sanitizeFtsQuery(query: string): string {
+  // Remove FTS5 special operators and wrap each word in quotes
+  return query
+    .replace(/[*"{}()^~<>:]/g, '') // Strip FTS5 special chars
+    .split(/\s+/)
+    .filter(w => w.length > 0)
+    .map(w => `"${w}"`)  // Quote each term for literal matching
+    .join(' ')
+}
 
 export const memories = {
   create(params: { type: string; content: string; tags: string[]; source: string; confidence?: number }): { id: string } {
@@ -162,7 +470,7 @@ export const memories = {
        WHERE memories_fts MATCH ?
        ORDER BY rank
        LIMIT ?`
-    ).all(query, limit)
+    ).all(sanitizeFtsQuery(query), limit)
   },
 
   getAll(limit = 100) {
@@ -278,19 +586,48 @@ export const costEntries = {
 // ============================================================
 
 export const employees = {
-  upsert(params: { slug: string; name: string; title: string; pillar: string; description: string; icon?: string; active?: boolean; archetype?: string; onboardingAnswers?: Record<string, string> }): { id: string } {
+  upsert(params: {
+    slug: string; name: string; title: string; pillar: string; description: string;
+    icon?: string; active?: boolean; archetype?: string; onboardingAnswers?: Record<string, string>;
+    department?: string; objective?: string; managerId?: string;
+    allowedToolsJson?: string[]; blockedToolsJson?: string[];
+    modelPreference?: string; maxBudgetPerRun?: number;
+    escalationPolicyJson?: unknown; handoffRulesJson?: unknown[];
+    memoryScope?: string; outputChannelsJson?: string[];
+  }): { id: string } {
     const id = uuid()
     const ts = now()
+    const existing = db().prepare('SELECT id FROM employees WHERE slug = ?').get(params.slug) as { id: string } | undefined
+    const effectiveId = existing?.id ?? id
     db().prepare(
-      `INSERT INTO employees (id, slug, name, title, pillar, description, icon, active, archetype, onboarding_answers_json, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO employees (id, slug, name, title, pillar, description, icon, active, archetype, onboarding_answers_json,
+         department, objective, manager_id, allowed_tools_json, blocked_tools_json,
+         model_preference, max_budget_per_run, escalation_policy_json, handoff_rules_json,
+         memory_scope, output_channels_json, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(slug) DO UPDATE SET
-         active = excluded.active,
-         archetype = excluded.archetype,
+         name = excluded.name, title = excluded.title, pillar = excluded.pillar,
+         description = excluded.description, icon = excluded.icon,
+         active = excluded.active, archetype = excluded.archetype,
          onboarding_answers_json = excluded.onboarding_answers_json,
+         department = excluded.department, objective = excluded.objective,
+         manager_id = excluded.manager_id, allowed_tools_json = excluded.allowed_tools_json,
+         blocked_tools_json = excluded.blocked_tools_json, model_preference = excluded.model_preference,
+         max_budget_per_run = excluded.max_budget_per_run, escalation_policy_json = excluded.escalation_policy_json,
+         handoff_rules_json = excluded.handoff_rules_json, memory_scope = excluded.memory_scope,
+         output_channels_json = excluded.output_channels_json,
          updated_at = excluded.updated_at`
-    ).run(id, params.slug, params.name, params.title, params.pillar, params.description, params.icon ?? '', params.active ? 1 : 0, params.archetype ?? null, JSON.stringify(params.onboardingAnswers ?? {}), ts, ts)
-    return { id }
+    ).run(effectiveId, params.slug, params.name, params.title, params.pillar, params.description,
+      params.icon ?? '', params.active ? 1 : 0, params.archetype ?? null,
+      JSON.stringify(params.onboardingAnswers ?? {}),
+      params.department ?? 'general', params.objective ?? null, params.managerId ?? null,
+      JSON.stringify(params.allowedToolsJson ?? []), JSON.stringify(params.blockedToolsJson ?? []),
+      params.modelPreference ?? 'standard', params.maxBudgetPerRun ?? 1.0,
+      params.escalationPolicyJson ? JSON.stringify(params.escalationPolicyJson) : null,
+      JSON.stringify(params.handoffRulesJson ?? []),
+      params.memoryScope ?? 'own', JSON.stringify(params.outputChannelsJson ?? ['web']),
+      ts, ts)
+    return { id: effectiveId }
   },
 
   get(slug: string) {
@@ -595,5 +932,445 @@ export const userProfile = {
          total_xp = excluded.total_xp,
          level = excluded.level`
     ).run(params.totalXp, params.level, now())
+  },
+}
+
+// ============================================================
+// ACTIVITY EVENTS (v2 control plane)
+// ============================================================
+
+export const activityEvents = {
+  emit(params: {
+    eventType: string
+    actorType: string
+    actorId: string
+    summary: string
+    targetType?: string
+    targetId?: string
+    detail?: unknown
+    conversationId?: string
+    jobId?: string
+    costUsd?: number
+  }): number {
+    const result = db().prepare(
+      `INSERT INTO activity_events (event_type, actor_type, actor_id, target_type, target_id, summary, detail_json, conversation_id, job_id, cost_usd, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      params.eventType, params.actorType, params.actorId,
+      params.targetType ?? null, params.targetId ?? null,
+      params.summary, params.detail ? JSON.stringify(params.detail) : null,
+      params.conversationId ?? null, params.jobId ?? null,
+      params.costUsd ?? 0, now()
+    )
+    return Number(result.lastInsertRowid)
+  },
+
+  list(params: { limit?: number; offset?: number; eventType?: string; actorId?: string; targetType?: string; targetId?: string; since?: string } = {}) {
+    const { limit = 50, offset = 0, eventType, actorId, targetType, targetId, since } = params
+    const where: string[] = []
+    const values: unknown[] = []
+
+    if (eventType) { where.push('event_type = ?'); values.push(eventType) }
+    if (actorId) { where.push('actor_id = ?'); values.push(actorId) }
+    if (targetType) { where.push('target_type = ?'); values.push(targetType) }
+    if (targetId) { where.push('target_id = ?'); values.push(targetId) }
+    if (since) { where.push('created_at >= ?'); values.push(since) }
+
+    const clause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''
+    values.push(limit, offset)
+
+    return db().prepare(
+      `SELECT id, event_type as eventType, actor_type as actorType, actor_id as actorId,
+       target_type as targetType, target_id as targetId, summary, detail_json as detailJson,
+       conversation_id as conversationId, job_id as jobId, cost_usd as costUsd,
+       created_at as createdAt
+       FROM activity_events ${clause} ORDER BY created_at DESC LIMIT ? OFFSET ?`
+    ).all(...values) as {
+      id: number; eventType: string; actorType: string; actorId: string
+      targetType: string | null; targetId: string | null; summary: string
+      detailJson: string | null; conversationId: string | null; jobId: string | null
+      costUsd: number; createdAt: string
+    }[]
+  },
+
+  countSince(since: string): number {
+    const row = db().prepare('SELECT COUNT(*) as count FROM activity_events WHERE created_at >= ?').get(since) as { count: number }
+    return row.count
+  },
+}
+
+// ============================================================
+// APPROVALS (v2 control plane)
+// ============================================================
+
+export const approvals = {
+  create(params: {
+    requestedBy: string
+    action: string
+    toolName?: string
+    toolInput?: unknown
+    context?: string
+    priority?: string
+    expiresAt?: string
+  }): { id: string } {
+    const id = uuid()
+    db().prepare(
+      `INSERT INTO approvals (id, requested_by, action, tool_name, tool_input_json, context, priority, status, expires_at, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`
+    ).run(id, params.requestedBy, params.action, params.toolName ?? null,
+      params.toolInput ? JSON.stringify(params.toolInput) : null,
+      params.context ?? null, params.priority ?? 'medium', params.expiresAt ?? null, now())
+    return { id }
+  },
+
+  get(id: string) {
+    return db().prepare(
+      `SELECT id, requested_by as requestedBy, action, tool_name as toolName,
+       tool_input_json as toolInputJson, context, priority, status,
+       decided_by as decidedBy, decided_at as decidedAt, expires_at as expiresAt,
+       created_at as createdAt
+       FROM approvals WHERE id = ?`
+    ).get(id) as {
+      id: string; requestedBy: string; action: string; toolName: string | null
+      toolInputJson: string | null; context: string | null; priority: string; status: string
+      decidedBy: string | null; decidedAt: string | null; expiresAt: string | null; createdAt: string
+    } | undefined
+  },
+
+  listPending(limit = 50) {
+    return db().prepare(
+      `SELECT id, requested_by as requestedBy, action, tool_name as toolName, context, priority, status,
+       expires_at as expiresAt, created_at as createdAt
+       FROM approvals WHERE status = 'pending' ORDER BY
+       CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END,
+       created_at ASC LIMIT ?`
+    ).all(limit) as {
+      id: string; requestedBy: string; action: string; toolName: string | null
+      context: string | null; priority: string; status: string
+      expiresAt: string | null; createdAt: string
+    }[]
+  },
+
+  decide(id: string, status: 'approved' | 'rejected', decidedBy: string): void {
+    db().prepare(
+      'UPDATE approvals SET status = ?, decided_by = ?, decided_at = ? WHERE id = ?'
+    ).run(status, decidedBy, now(), id)
+  },
+
+  countPending(): number {
+    const row = db().prepare("SELECT COUNT(*) as count FROM approvals WHERE status = 'pending'").get() as { count: number }
+    return row.count
+  },
+}
+
+// ============================================================
+// MONITORS (v2 control plane)
+// ============================================================
+
+export const monitors = {
+  create(params: {
+    name: string
+    description?: string
+    employeeId?: string
+    sourceType: string
+    sourceConfig: unknown
+    checkSchedule: string
+    thresholds?: unknown
+  }): { id: string } {
+    const id = uuid()
+    db().prepare(
+      `INSERT INTO monitors (id, name, description, employee_id, source_type, source_config_json, check_schedule, thresholds_json, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(id, params.name, params.description ?? null, params.employeeId ?? null,
+      params.sourceType, JSON.stringify(params.sourceConfig), params.checkSchedule,
+      params.thresholds ? JSON.stringify(params.thresholds) : null, now())
+    return { id }
+  },
+
+  get(id: string) {
+    return db().prepare(
+      `SELECT id, name, description, employee_id as employeeId, source_type as sourceType,
+       source_config_json as sourceConfigJson, check_schedule as checkSchedule,
+       thresholds_json as thresholdsJson, last_checked_at as lastCheckedAt,
+       last_value as lastValue, last_status as lastStatus, enabled,
+       created_at as createdAt
+       FROM monitors WHERE id = ?`
+    ).get(id) as {
+      id: string; name: string; description: string | null; employeeId: string | null
+      sourceType: string; sourceConfigJson: string; checkSchedule: string
+      thresholdsJson: string | null; lastCheckedAt: string | null
+      lastValue: string | null; lastStatus: string; enabled: number; createdAt: string
+    } | undefined
+  },
+
+  list() {
+    return db().prepare(
+      `SELECT id, name, description, employee_id as employeeId, source_type as sourceType,
+       last_status as lastStatus, last_checked_at as lastCheckedAt, enabled,
+       created_at as createdAt
+       FROM monitors ORDER BY name`
+    ).all() as {
+      id: string; name: string; description: string | null; employeeId: string | null
+      sourceType: string; lastStatus: string; lastCheckedAt: string | null
+      enabled: number; createdAt: string
+    }[]
+  },
+
+  updateCheck(id: string, value: string, status: string): void {
+    db().prepare(
+      'UPDATE monitors SET last_value = ?, last_status = ?, last_checked_at = ? WHERE id = ?'
+    ).run(value, status, now(), id)
+  },
+
+  toggle(id: string, enabled: boolean): void {
+    db().prepare('UPDATE monitors SET enabled = ? WHERE id = ?').run(enabled ? 1 : 0, id)
+  },
+}
+
+// ============================================================
+// MONITOR ALERTS (v2 control plane)
+// ============================================================
+
+export const monitorAlerts = {
+  create(params: { monitorId: string; severity: string; message: string; value?: string }): number {
+    const result = db().prepare(
+      'INSERT INTO monitor_alerts (monitor_id, severity, message, value, created_at) VALUES (?, ?, ?, ?, ?)'
+    ).run(params.monitorId, params.severity, params.message, params.value ?? null, now())
+    return Number(result.lastInsertRowid)
+  },
+
+  listByMonitor(monitorId: string, limit = 50) {
+    return db().prepare(
+      `SELECT id, monitor_id as monitorId, severity, message, value, acknowledged,
+       acknowledged_by as acknowledgedBy, created_at as createdAt
+       FROM monitor_alerts WHERE monitor_id = ? ORDER BY created_at DESC LIMIT ?`
+    ).all(monitorId, limit) as {
+      id: number; monitorId: string; severity: string; message: string
+      value: string | null; acknowledged: number; acknowledgedBy: string | null; createdAt: string
+    }[]
+  },
+
+  listRecent(limit = 50) {
+    return db().prepare(
+      `SELECT ma.id, ma.monitor_id as monitorId, m.name as monitorName, ma.severity, ma.message,
+       ma.value, ma.acknowledged, ma.created_at as createdAt
+       FROM monitor_alerts ma
+       JOIN monitors m ON ma.monitor_id = m.id
+       ORDER BY ma.created_at DESC LIMIT ?`
+    ).all(limit) as {
+      id: number; monitorId: string; monitorName: string; severity: string; message: string
+      value: string | null; acknowledged: number; createdAt: string
+    }[]
+  },
+
+  acknowledge(id: number, by: string): void {
+    db().prepare('UPDATE monitor_alerts SET acknowledged = 1, acknowledged_by = ? WHERE id = ?').run(by, id)
+  },
+
+  countUnacknowledged(): number {
+    const row = db().prepare('SELECT COUNT(*) as count FROM monitor_alerts WHERE acknowledged = 0').get() as { count: number }
+    return row.count
+  },
+}
+
+// ============================================================
+// KPI DEFINITIONS (v2 control plane)
+// ============================================================
+
+export const kpiDefinitions = {
+  create(params: {
+    employeeId: string
+    name: string
+    description?: string
+    source: unknown
+    target: number
+    unit?: string
+    frequency?: string
+    direction?: string
+    thresholds: { green: number; yellow: number; red: number }
+  }): { id: string } {
+    const id = uuid()
+    db().prepare(
+      `INSERT INTO kpi_definitions (id, employee_id, name, description, source_json, target, unit, frequency, direction, thresholds_json, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(id, params.employeeId, params.name, params.description ?? null,
+      JSON.stringify(params.source), params.target, params.unit ?? 'count',
+      params.frequency ?? 'weekly', params.direction ?? 'higher_is_better',
+      JSON.stringify(params.thresholds), now())
+    return { id }
+  },
+
+  listByEmployee(employeeId: string) {
+    return db().prepare(
+      `SELECT id, employee_id as employeeId, name, description, source_json as sourceJson,
+       target, unit, frequency, direction, thresholds_json as thresholdsJson,
+       created_at as createdAt
+       FROM kpi_definitions WHERE employee_id = ? ORDER BY name`
+    ).all(employeeId) as {
+      id: string; employeeId: string; name: string; description: string | null
+      sourceJson: string; target: number; unit: string; frequency: string
+      direction: string; thresholdsJson: string; createdAt: string
+    }[]
+  },
+
+  get(id: string) {
+    return db().prepare(
+      `SELECT id, employee_id as employeeId, name, description, source_json as sourceJson,
+       target, unit, frequency, direction, thresholds_json as thresholdsJson,
+       created_at as createdAt
+       FROM kpi_definitions WHERE id = ?`
+    ).get(id) as {
+      id: string; employeeId: string; name: string; description: string | null
+      sourceJson: string; target: number; unit: string; frequency: string
+      direction: string; thresholdsJson: string; createdAt: string
+    } | undefined
+  },
+
+  delete(id: string): void {
+    db().prepare('DELETE FROM kpi_definitions WHERE id = ?').run(id)
+  },
+}
+
+// ============================================================
+// KPI MEASUREMENTS (v2 control plane)
+// ============================================================
+
+export const kpiMeasurements = {
+  record(params: { kpiId: string; employeeId: string; value: number; status: string; source?: string }): number {
+    const result = db().prepare(
+      'INSERT INTO kpi_measurements (kpi_id, employee_id, value, status, measured_at, source) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run(params.kpiId, params.employeeId, params.value, params.status, now(), params.source ?? null)
+    return Number(result.lastInsertRowid)
+  },
+
+  latest(kpiId: string) {
+    return db().prepare(
+      `SELECT id, kpi_id as kpiId, employee_id as employeeId, value, status,
+       measured_at as measuredAt, source
+       FROM kpi_measurements WHERE kpi_id = ? ORDER BY measured_at DESC LIMIT 1`
+    ).get(kpiId) as {
+      id: number; kpiId: string; employeeId: string; value: number; status: string
+      measuredAt: string; source: string | null
+    } | undefined
+  },
+
+  history(kpiId: string, limit = 30) {
+    return db().prepare(
+      `SELECT id, value, status, measured_at as measuredAt
+       FROM kpi_measurements WHERE kpi_id = ? ORDER BY measured_at DESC LIMIT ?`
+    ).all(kpiId, limit) as { id: number; value: number; status: string; measuredAt: string }[]
+  },
+
+  latestByEmployee(employeeId: string) {
+    return db().prepare(
+      `SELECT km.kpi_id as kpiId, kd.name, km.value, km.status, km.measured_at as measuredAt
+       FROM kpi_measurements km
+       JOIN kpi_definitions kd ON km.kpi_id = kd.id
+       WHERE km.employee_id = ? AND km.id IN (
+         SELECT MAX(id) FROM kpi_measurements GROUP BY kpi_id
+       )
+       ORDER BY kd.name`
+    ).all(employeeId) as { kpiId: string; name: string; value: number; status: string; measuredAt: string }[]
+  },
+}
+
+// ============================================================
+// ROUTINES (v2 control plane)
+// ============================================================
+
+export const routines = {
+  create(params: {
+    employeeId: string
+    name: string
+    description?: string
+    schedule: string
+    task: string
+    tools?: string[]
+    outputChannel?: string
+    timeoutSeconds?: number
+  }): { id: string } {
+    const id = uuid()
+    db().prepare(
+      `INSERT INTO routines (id, employee_id, name, description, schedule, task, tools_json, output_channel, timeout_seconds, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(id, params.employeeId, params.name, params.description ?? null,
+      params.schedule, params.task, JSON.stringify(params.tools ?? []),
+      params.outputChannel ?? 'web', params.timeoutSeconds ?? 300, now())
+    return { id }
+  },
+
+  listByEmployee(employeeId: string) {
+    return db().prepare(
+      `SELECT id, employee_id as employeeId, name, description, schedule, task,
+       tools_json as toolsJson, output_channel as outputChannel,
+       timeout_seconds as timeoutSeconds, enabled, last_run_at as lastRunAt,
+       next_run_at as nextRunAt, run_count as runCount, last_status as lastStatus,
+       created_at as createdAt
+       FROM routines WHERE employee_id = ? ORDER BY name`
+    ).all(employeeId) as {
+      id: string; employeeId: string; name: string; description: string | null
+      schedule: string; task: string; toolsJson: string; outputChannel: string
+      timeoutSeconds: number; enabled: number; lastRunAt: string | null
+      nextRunAt: string | null; runCount: number; lastStatus: string | null; createdAt: string
+    }[]
+  },
+
+  listEnabled() {
+    return db().prepare(
+      `SELECT id, employee_id as employeeId, name, schedule, task,
+       tools_json as toolsJson, timeout_seconds as timeoutSeconds,
+       next_run_at as nextRunAt
+       FROM routines WHERE enabled = 1 ORDER BY next_run_at ASC`
+    ).all() as {
+      id: string; employeeId: string; name: string; schedule: string; task: string
+      toolsJson: string; timeoutSeconds: number; nextRunAt: string | null
+    }[]
+  },
+
+  recordRun(id: string, status: string, nextRunAt?: string): void {
+    db().prepare(
+      'UPDATE routines SET last_run_at = ?, last_status = ?, run_count = run_count + 1, next_run_at = ? WHERE id = ?'
+    ).run(now(), status, nextRunAt ?? null, id)
+  },
+
+  toggle(id: string, enabled: boolean): void {
+    db().prepare('UPDATE routines SET enabled = ? WHERE id = ?').run(enabled ? 1 : 0, id)
+  },
+}
+
+// ============================================================
+// DAILY PRIORITIES
+// ============================================================
+
+export const priorities = {
+  create(params: { title: string; description?: string; emoji?: string; urgency?: string }): { id: string } {
+    const id = uuid()
+    const today = new Date().toISOString().slice(0, 10)
+    db().prepare(
+      'INSERT INTO daily_priorities (id, title, description, emoji, urgency, date, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    ).run(id, params.title, params.description ?? null, params.emoji ?? '⚡', params.urgency ?? 'normal', today, now())
+    return { id }
+  },
+
+  listToday() {
+    const today = new Date().toISOString().slice(0, 10)
+    return db().prepare(
+      `SELECT id, title, description, emoji, urgency, completed, date, created_at as createdAt
+       FROM daily_priorities WHERE date = ? ORDER BY
+       CASE urgency WHEN 'urgent' THEN 0 WHEN 'important' THEN 1 ELSE 2 END,
+       created_at ASC`
+    ).all(today) as { id: string; title: string; description: string | null; emoji: string; urgency: string; completed: number; date: string; createdAt: string }[]
+  },
+
+  complete(id: string): void {
+    db().prepare('UPDATE daily_priorities SET completed = 1 WHERE id = ?').run(id)
+  },
+
+  uncomplete(id: string): void {
+    db().prepare('UPDATE daily_priorities SET completed = 0 WHERE id = ?').run(id)
+  },
+
+  delete(id: string): void {
+    db().prepare('DELETE FROM daily_priorities WHERE id = ?').run(id)
   },
 }

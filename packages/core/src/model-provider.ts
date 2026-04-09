@@ -494,7 +494,7 @@ async function callClaudeCli(
       '-p',
       '--output-format', 'json',
       '--system-prompt-file', systemFile,
-      '--max-turns', '1',
+      '--max-turns', '3',
     ], {
       input: userPrompt,
       encoding: 'utf-8',
@@ -576,11 +576,51 @@ export type TaskComplexity = 'light' | 'standard' | 'heavy'
  * Claude CLI for standard/heavy (best quality, uses subscription).
  * Falls back through: OpenRouter → OpenAI → Claude CLI
  */
-export function resolveSmartModelConfig(complexity: TaskComplexity = 'standard'): ModelConfig {
+export function resolveSmartModelConfig(
+  complexity: TaskComplexity = 'standard',
+  options?: { needsToolCalling?: boolean }
+): ModelConfig {
   const hasOpenRouter = !!process.env.OPENROUTER_API_KEY
   const hasOpenAI = !!process.env.OPENAI_API_KEY
   const hasClaudeCli = (process.env.ANTHROPIC_API_KEY ?? '').startsWith('sk-ant-oat01-')
   const hasAnthropicApi = !!(process.env.ANTHROPIC_API_KEY) && !hasClaudeCli
+
+  // When tool calling is required, NEVER use claude-cli (it can't do native tool-use).
+  // Prefer providers with native API tool support in order:
+  // OpenRouter → Anthropic direct → OpenAI → Claude CLI as absolute last resort.
+  if (options?.needsToolCalling) {
+    if (hasOpenRouter) {
+      return {
+        provider: 'openrouter',
+        modelId: complexity === 'light'
+          ? 'anthropic/claude-haiku-4-20250514'
+          : 'anthropic/claude-sonnet-4-20250514',
+        apiKey: process.env.OPENROUTER_API_KEY!,
+        baseUrl: 'https://openrouter.ai/api/v1',
+      }
+    }
+    if (hasAnthropicApi) {
+      return {
+        provider: 'anthropic',
+        modelId: complexity === 'light'
+          ? 'claude-haiku-4-20250514'
+          : 'claude-sonnet-4-20250514',
+        apiKey: process.env.ANTHROPIC_API_KEY!,
+      }
+    }
+    if (hasOpenAI) {
+      return {
+        provider: 'openai',
+        modelId: complexity === 'light' ? 'gpt-4o-mini' : 'gpt-4o',
+        apiKey: process.env.OPENAI_API_KEY!,
+      }
+    }
+    // Absolute last resort — CLI does not support native tool calling
+    if (hasClaudeCli) {
+      return { provider: 'claude-cli', modelId: 'claude-sonnet-4-20250514', apiKey: process.env.ANTHROPIC_API_KEY! }
+    }
+    return { provider: 'anthropic', modelId: 'claude-sonnet-4-20250514', apiKey: '' }
+  }
 
   // Light tasks: use cheapest available
   if (complexity === 'light') {

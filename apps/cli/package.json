@@ -12,6 +12,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "@blade/conversation": "*",
     "@blade/core": "*",
     "@blade/db": "*",
     "@blade/docker-runner": "*",

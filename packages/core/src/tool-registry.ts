@@ -56,42 +56,75 @@ export function destroyToolScope(scopeId: string): void {
   _scopes.delete(scopeId)
 }
 
+/**
+ * Create a tool scope pre-populated with global tools matching allowedNames.
+ * This is the primary way to enforce per-employee tool restrictions.
+ * Only tools whose names appear in the allowlist are included.
+ */
+export function createFilteredScope(allowedToolNames: readonly string[]): string {
+  const id = crypto.randomUUID()
+  const scope = new Map<string, ToolRegistration>()
+  const allowSet = new Set(allowedToolNames)
+
+  for (const [name, registration] of _registry) {
+    if (allowSet.has(name)) {
+      scope.set(name, registration)
+    }
+  }
+
+  _scopes.set(id, scope)
+  return id
+}
+
 export async function executeTool(
   name: string,
   toolUseId: string,
   input: Record<string, unknown>,
   context: ExecutionContext
 ): Promise<ToolCallResult> {
-  // Check scoped tools first
+  // When a scope is set, ONLY check the scope — no fallthrough to global.
+  // This makes per-employee tool restrictions a hard sandbox.
   if (context.toolScopeId) {
     const scope = _scopes.get(context.toolScopeId)
-    if (scope?.has(name)) {
-      const registration = scope.get(name)!
-      const start = performance.now()
-      try {
-        const result = await registration.handler(input, context)
-        return {
-          ...result,
-          toolUseId,
-          durationMs: Math.round(performance.now() - start),
-        }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err)
-        return {
-          toolUseId,
-          toolName: name,
-          input,
-          success: false,
-          data: null,
-          display: `Tool "${name}" error: ${message}`,
-          durationMs: Math.round(performance.now() - start),
-          timestamp: new Date().toISOString(),
-        }
+    const scopedReg = scope?.get(name)
+
+    if (!scopedReg) {
+      return {
+        toolUseId,
+        toolName: name,
+        input,
+        success: false,
+        data: null,
+        display: `Tool "${name}" not available in this scope`,
+        durationMs: 0,
+        timestamp: new Date().toISOString(),
+      }
+    }
+
+    const start = performance.now()
+    try {
+      const result = await scopedReg.handler(input, context)
+      return {
+        ...result,
+        toolUseId,
+        durationMs: Math.round(performance.now() - start),
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      return {
+        toolUseId,
+        toolName: name,
+        input,
+        success: false,
+        data: null,
+        display: `Tool "${name}" error: ${message}`,
+        durationMs: Math.round(performance.now() - start),
+        timestamp: new Date().toISOString(),
       }
     }
   }
 
-  // Fall back to global registry
+  // No scope — use global registry
   const registration = _registry.get(name)
 
   if (!registration) {

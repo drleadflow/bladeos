@@ -66,6 +66,9 @@ export interface ExecutionContext {
   branch?: string
   userId: string
   modelId: string
+  /** Pre-resolved model config — when provided, the agent loop uses this directly
+   *  instead of re-resolving from modelId (which can pick the wrong provider). */
+  modelConfig?: ModelConfig
   maxIterations: number
   costBudget: number
   toolScopeId?: string
@@ -182,6 +185,7 @@ export type JobStatus =
   | 'testing'
   | 'pr_creating'
   | 'completed'
+  | 'stopped'
   | 'failed'
 
 export interface Job {
@@ -308,4 +312,73 @@ export interface StoredMessage {
   inputTokens?: number
   outputTokens?: number
   createdAt: string
+}
+
+// ============================================================
+// CHANNEL & CONVERSATION ENGINE (v2)
+// ============================================================
+
+export type ChannelType = 'web' | 'telegram' | 'cli' | 'api' | 'slack' | 'email'
+
+export interface ConversationRequest {
+  /** Existing conversation ID, or undefined to start a new one. */
+  conversationId?: ConversationId
+  /** The user's message text. */
+  message: string
+  /** Which channel this request originates from. */
+  channel: ChannelType
+  /** Channel-specific metadata (e.g., Telegram chatId, web sessionId). */
+  channelMetadata?: Record<string, unknown>
+  /** Which employee should respond (undefined = default Blade personality). */
+  employeeId?: string
+  /** User identifier. */
+  userId: string
+  /** Override system prompt. */
+  systemPromptOverride?: string
+  /** Override max iterations. */
+  maxIterations?: number
+  /** Override cost budget. */
+  costBudget?: number
+}
+
+export type ConversationEvent =
+  | { readonly type: 'conversation_started'; readonly conversationId: ConversationId }
+  | { readonly type: 'text_delta'; readonly text: string }
+  | { readonly type: 'tool_call'; readonly name: string; readonly input: Record<string, unknown>; readonly result: ToolCallResult }
+  | { readonly type: 'turn'; readonly iteration: number; readonly costSoFar: number; readonly stopReason: string }
+  | { readonly type: 'thinking'; readonly summary: string }
+  | { readonly type: 'done'; readonly conversationId: ConversationId; readonly response: string; readonly cost: number; readonly toolCalls: number; readonly stopReason: string }
+  | { readonly type: 'error'; readonly message: string }
+
+export interface ConversationState {
+  conversationId: ConversationId
+  title?: string
+  history: AgentMessage[]
+  channels: ChannelType[]
+  createdAt: string
+  updatedAt: string
+}
+
+// ============================================================
+// CODING PIPELINE (v2 — typed options/result)
+// ============================================================
+
+export interface CodingPipelineOptions {
+  readonly title: string
+  readonly description: string
+  readonly repoUrl: string
+  readonly baseBranch?: string
+  readonly agentModel?: string
+  readonly onStatus?: (status: string, message: string) => void
+}
+
+export interface CodingPipelineResult {
+  readonly jobId: string
+  readonly status: 'completed' | 'failed'
+  readonly prUrl?: string
+  readonly prNumber?: number
+  readonly totalCost: number
+  readonly totalToolCalls: number
+  readonly totalIterations: number
+  readonly error?: string
 }

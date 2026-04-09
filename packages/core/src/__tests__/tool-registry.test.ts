@@ -144,13 +144,13 @@ describe('tool-registry: scoped tools', () => {
     expect(result.data).toBe('from-scope')
   })
 
-  it('executeTool falls back to global when tool not in scope', async () => {
+  it('executeTool does NOT fall back to global when tool not in scope (strict sandbox)', async () => {
     const scopeId = createToolScope()
     registerTool(makeDef('global_tool'), makeHandler('from-global'))
     const ctx = { ...baseContext, toolScopeId: scopeId }
     const result = await executeTool('global_tool', 'use-g1', {}, ctx)
-    expect(result.success).toBe(true)
-    expect(result.data).toBe('from-global')
+    expect(result.success).toBe(false)
+    expect(result.display).toContain('not available in this scope')
   })
 
   it('scoped tool takes priority over global tool with same name', async () => {
@@ -169,14 +169,14 @@ describe('tool-registry: scoped tools', () => {
     expect(getScopedToolDefinitions(scopeId)).toHaveLength(0)
   })
 
-  it('executeTool returns not-found after scope is destroyed', async () => {
+  it('executeTool returns not-available after scope is destroyed', async () => {
     const scopeId = createToolScope()
     registerScopedTool(scopeId, makeDef('ephemeral'), makeHandler())
     destroyToolScope(scopeId)
     const ctx = { ...baseContext, toolScopeId: scopeId }
     const result = await executeTool('ephemeral', 'use-e1', {}, ctx)
     expect(result.success).toBe(false)
-    expect(result.display).toContain('not found')
+    expect(result.display).toContain('not available in this scope')
   })
 
   it('multiple scopes are isolated from each other', () => {

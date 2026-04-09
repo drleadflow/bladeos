@@ -58,10 +58,10 @@ export function Sidebar({
 
   if (collapsed) {
     return (
-      <div className="flex w-10 shrink-0 flex-col border-r border-zinc-800 bg-zinc-900">
+      <div className="hidden border-r border-white/10 bg-zinc-950/70 lg:flex lg:w-[72px] lg:shrink-0 lg:flex-col">
         <button
           onClick={() => setCollapsed(false)}
-          className="p-2 text-zinc-500 transition-colors hover:text-zinc-300"
+          className="m-3 flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-zinc-400 transition-colors hover:border-cyan-400/30 hover:bg-white/10 hover:text-zinc-100"
           aria-label="Expand sidebar"
         >
           <svg
@@ -83,66 +83,105 @@ export function Sidebar({
   }
 
   return (
-    <div className="flex w-64 shrink-0 flex-col border-r border-zinc-800 bg-zinc-900">
-      {/* Header */}
-      <div className="flex items-center justify-between border-b border-zinc-800 px-3 py-2">
-        <button
-          onClick={onNewChat}
-          className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-500"
-        >
-          New Chat
-        </button>
-        <button
-          onClick={() => setCollapsed(true)}
-          className="p-1 text-zinc-500 transition-colors hover:text-zinc-300"
-          aria-label="Collapse sidebar"
-        >
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
+    <aside className="hidden w-[320px] shrink-0 border-r border-white/10 bg-zinc-950/60 lg:flex lg:flex-col">
+      <div className="border-b border-white/10 px-4 py-4">
+        <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 shadow-[0_10px_40px_rgba(0,0,0,0.25)]">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-[11px] font-medium uppercase tracking-[0.22em] text-cyan-300/80">
+                Workspace
+              </p>
+              <h2 className="mt-2 text-lg font-semibold text-zinc-100">
+                Conversations
+              </h2>
+            </div>
+            <button
+              onClick={() => setCollapsed(true)}
+              className="flex h-10 w-10 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-zinc-500 transition-colors hover:border-white/20 hover:bg-white/10 hover:text-zinc-200"
+              aria-label="Collapse sidebar"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <polyline points="15 18 9 12 15 6" />
+              </svg>
+            </button>
+          </div>
+
+          <p className="mt-3 text-sm leading-6 text-zinc-400">
+            Keep context close, jump between threads, and spin up fresh work without losing the thread.
+          </p>
+
+          <button
+            onClick={onNewChat}
+            className="mt-4 inline-flex w-full items-center justify-center rounded-2xl bg-gradient-to-r from-cyan-400 via-sky-500 to-blue-600 px-4 py-3 text-sm font-semibold text-zinc-950 transition-transform duration-200 hover:scale-[1.01]"
           >
-            <polyline points="15 18 9 12 15 6" />
-          </svg>
-        </button>
+            New Conversation
+          </button>
+        </div>
       </div>
 
-      {/* Conversation List */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="border-b border-white/10 px-4 py-3">
+        <div className="flex items-center justify-between text-xs uppercase tracking-[0.2em] text-zinc-500">
+          <span>Recent</span>
+          <span>{conversations.length}</span>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-3 py-3">
         {conversations.length === 0 ? (
-          <p className="px-3 py-4 text-xs text-zinc-600">
-            No conversations yet
-          </p>
+          <div className="rounded-3xl border border-dashed border-white/10 bg-white/[0.03] p-5 text-sm text-zinc-500">
+            No conversations yet. Start a new thread and Blade will keep the context here.
+          </div>
         ) : (
-          <ul className="py-1">
+          <ul className="space-y-2">
             {conversations.map((conv) => (
               <li key={conv.id}>
                 <button
                   onClick={() => onSelectConversation(conv.id)}
-                  className={`flex w-full flex-col px-3 py-2 text-left transition-colors ${
+                  className={`group w-full rounded-2xl border px-4 py-3 text-left transition-all ${
                     currentConversationId === conv.id
-                      ? 'bg-zinc-800 text-zinc-100'
-                      : 'text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-200'
+                      ? 'border-cyan-400/30 bg-cyan-400/10 shadow-[0_0_0_1px_rgba(34,211,238,0.1)]'
+                      : 'border-transparent bg-white/[0.03] hover:border-white/10 hover:bg-white/[0.06]'
                   }`}
                 >
-                  <span className="truncate text-sm">
-                    {conv.title || 'New conversation'}
-                  </span>
-                  <span className="mt-0.5 text-xs text-zinc-600">
-                    {formatTimestamp(conv.updatedAt)}
-                  </span>
+                  <div className="flex items-start justify-between gap-3">
+                    <span className="line-clamp-2 text-sm font-medium text-zinc-100">
+                      {conv.title || 'New conversation'}
+                    </span>
+                    <span className="whitespace-nowrap text-[11px] uppercase tracking-[0.18em] text-zinc-500">
+                      {formatTimestamp(conv.updatedAt)}
+                    </span>
+                  </div>
+                  <div className="mt-2 flex items-center gap-2 text-xs text-zinc-500">
+                    <span className="inline-block h-2 w-2 rounded-full bg-emerald-400/70" />
+                    <span className="group-hover:text-zinc-300">Ready to resume</span>
+                  </div>
                 </button>
               </li>
             ))}
           </ul>
         )}
       </div>
-    </div>
+
+      <div className="border-t border-white/10 px-4 py-4">
+        <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+          <p className="text-[11px] uppercase tracking-[0.2em] text-zinc-500">
+            Focus
+          </p>
+          <p className="mt-2 text-sm text-zinc-300">
+            One pane for memory, one pane for action, one system for follow-through.
+          </p>
+        </div>
+      </div>
+    </aside>
   )
 }

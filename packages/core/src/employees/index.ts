@@ -61,3 +61,10 @@ export {
   clearHandoffs,
 } from './collaboration.js'
 export type { HandoffRequest } from './collaboration.js'
+
+// Proactive Behaviors
+export {
+  runProactiveBehavior,
+  scheduleEmployeeBehaviors,
+  stopEmployeeBehaviors,
+} from './proactive.js'

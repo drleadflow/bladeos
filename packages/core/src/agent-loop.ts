@@ -27,6 +27,17 @@ function extractText(content: ContentBlock[]): string {
     .join('')
 }
 
+function extractLatestTextFromTurns(turns: AgentTurn[]): string {
+  for (let i = turns.length - 1; i >= 0; i--) {
+    const text = extractText(turns[i].response.content).trim()
+    if (text) {
+      return text
+    }
+  }
+
+  return ''
+}
+
 function extractToolUseBlocks(content: ContentBlock[]): ContentBlockToolUse[] {
   return content.filter(
     (b): b is ContentBlockToolUse => b.type === 'tool_use'
@@ -63,7 +74,7 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
     onError,
   } = options
 
-  const modelConfig: ModelConfig = resolveModelConfig(context.modelId)
+  const modelConfig: ModelConfig = context.modelConfig ?? resolveModelConfig(context.modelId)
 
   if (!modelConfig.apiKey) {
     throw new Error(`No API key configured for provider "${modelConfig.provider}". Set the appropriate environment variable.`)
@@ -139,6 +150,11 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
     // Track cost
     const cost = calculateCost(response!.model, response!.inputTokens, response!.outputTokens)
     totalCost += cost.totalCostUsd
+
+    // NOTE: Cost is NOT persisted to DB here. The caller (ConversationEngine,
+    // coding pipeline, workflow runner) is the single cost-recording authority.
+    // This avoids double-counting. The in-memory totalCost accumulator above
+    // is used only for budget gating within this loop.
 
     // Check if model wants to use tools
     const toolUseBlocks = extractToolUseBlocks(response!.content)
@@ -261,9 +277,7 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
     }
   }
 
-  const finalResponse = turns.length > 0
-    ? extractText(turns[turns.length - 1].response.content)
-    : ''
+  const finalResponse = extractLatestTextFromTurns(turns)
 
   const result: AgentLoopResult = {
     finalResponse,
@@ -272,6 +286,23 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
     totalToolCalls,
     stopReason,
   }
+
+  // Award XP for agent loop activity
+  try {
+    const { awardXP, XP_AWARDS } = await import('./gamification/index.js')
+    if (totalToolCalls > 0) {
+      awardXP({ action: 'first_tool_use_of_day', xp: XP_AWARDS.first_tool_use_of_day })
+    }
+    if (turns.length > 0 && stopReason === 'end_turn') {
+      awardXP({ action: 'completed_task', xp: XP_AWARDS.completed_task })
+    }
+  } catch { /* gamification not initialized */ }
+
+  // Check achievements after awarding XP
+  try {
+    const { checkAchievements } = await import('./gamification/index.js')
+    checkAchievements()
+  } catch { /* ignore */ }
 
   onComplete?.(result)
 

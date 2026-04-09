@@ -338,7 +338,7 @@ program
       ? process.env.TELEGRAM_ALLOWED_CHAT_IDS.split(',').map(id => id.trim()).filter(Boolean)
       : undefined
 
-    const { startTelegramBot } = await import('@blade/core')
+    const { startTelegramBot } = await import('@blade/conversation')
     startTelegramBot(token, allowedChatIds)
 
     console.log('\n⚔️  Blade Telegram Bot')

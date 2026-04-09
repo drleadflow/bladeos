@@ -105,10 +105,46 @@ export async function runWorkflow(
 
   logger.info('Workflow', `Starting workflow "${workflow.name}" (run: ${runId})`)
 
+  // Validate all dependency references before executing
+  const allStepIds = new Set(workflow.steps.map(s => s.id))
+  for (const step of workflow.steps) {
+    for (const dep of step.dependsOn ?? []) {
+      if (!allStepIds.has(dep)) {
+        throw new Error(`Step "${step.id}" depends on non-existent step "${dep}"`)
+      }
+    }
+  }
+
+  // Detect cycles via DFS before executing
+  const visited = new Set<string>()
+  const visiting = new Set<string>()
+  function hasCycle(stepId: string): boolean {
+    if (visiting.has(stepId)) return true
+    if (visited.has(stepId)) return false
+    visiting.add(stepId)
+    const step = workflow!.steps.find(s => s.id === stepId)
+    for (const dep of step?.dependsOn ?? []) {
+      if (hasCycle(dep)) return true
+    }
+    visiting.delete(stepId)
+    visited.add(stepId)
+    return false
+  }
+  for (const step of workflow.steps) {
+    if (hasCycle(step.id)) {
+      throw new Error(`Circular dependency detected involving step "${step.id}"`)
+    }
+  }
+
   const completedSteps = new Set<string>()
   const failedSteps = new Set<string>()
+  const MAX_WORKFLOW_ITERATIONS = workflow.steps.length * 3
+  let loopCount = 0
 
   while (true) {
+    if (++loopCount > MAX_WORKFLOW_ITERATIONS) {
+      throw new Error(`Workflow exceeded maximum iterations (${MAX_WORKFLOW_ITERATIONS}). Possible deadlock.`)
+    }
     const readySteps = getReadySteps(workflow, new Set([...completedSteps, ...failedSteps]))
     if (readySteps.length === 0) break
 
@@ -133,6 +169,7 @@ export async function runWorkflow(
           }
         }
 
+        const STEP_TIMEOUT_MS = 5 * 60 * 1000 // 5 minutes per step
         const start = performance.now()
         const context: ExecutionContext = {
           conversationId: `workflow-${runId}-${step.id}`,
@@ -142,12 +179,22 @@ export async function runWorkflow(
           costBudget: 2.0,
         }
 
-        const result = await runAgentLoop({
-          systemPrompt,
-          messages: [{ role: 'user', content: fullTask }] as AgentMessage[],
-          tools: getAllToolDefinitions(),
-          context,
-        })
+        const timeoutPromise = new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error(`Step "${step.id}" timed out after ${STEP_TIMEOUT_MS / 1000}s`)),
+            STEP_TIMEOUT_MS
+          )
+        )
+
+        const result = await Promise.race([
+          runAgentLoop({
+            systemPrompt,
+            messages: [{ role: 'user', content: fullTask }] as AgentMessage[],
+            tools: getAllToolDefinitions(),
+            context,
+          }),
+          timeoutPromise,
+        ])
 
         return {
           stepId: step.id,

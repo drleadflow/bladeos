@@ -1,6 +1,7 @@
-import { initializeDb, jobs } from '@blade/db'
+import { initializeDb, jobs, workerSessions } from '@blade/db'
 import { logger } from '@blade/shared'
 import { requireAuth, unauthorizedResponse } from '@/lib/auth'
+import { launchJobPipeline } from '@/lib/job-runner'
 
 export const runtime = 'nodejs'
 
@@ -33,29 +34,19 @@ export async function POST(
 
     // Mark as started immediately to prevent race conditions
     jobs.updateStatus(id, 'cloning')
+    workerSessions.update(id, {
+      status: 'booting',
+      runtime: 'pending',
+      conversationId: `job-${id}`,
+      latestSummary: 'Worker booting and preparing repository clone.',
+      startedAt: new Date().toISOString(),
+      lastSeenAt: new Date().toISOString(),
+    })
 
     const jobData = job as { id: string; title: string; description: string; repoUrl: string; baseBranch: string; agentModel: string }
 
     // Run pipeline in background (don't await)
-    import('@blade/core').then(({ runCodingPipeline }) => {
-      runCodingPipeline({
-        jobId: jobData.id,
-        title: jobData.title,
-        description: jobData.description,
-        repoUrl: jobData.repoUrl,
-        baseBranch: jobData.baseBranch,
-        agentModel: jobData.agentModel,
-        githubToken: process.env.GITHUB_TOKEN ?? '',
-      }).catch((err: unknown) => {
-        const msg = err instanceof Error ? err.message : 'Pipeline crashed'
-        logger.error('Jobs', `Pipeline error for ${id}: ${msg}`)
-        jobs.updateStatus(id, 'failed', { error: msg })
-      })
-    }).catch((err: unknown) => {
-      const msg = err instanceof Error ? err.message : 'Failed to load @blade/core'
-      logger.error('Jobs', `Import error: ${msg}`)
-      jobs.updateStatus(id, 'failed', { error: msg })
-    })
+    launchJobPipeline(jobData)
 
     return Response.json({
       success: true,

@@ -1,0 +1,388 @@
+'use client'
+
+import { useCallback, useEffect, useState } from 'react'
+import Link from 'next/link'
+import ApprovalsInbox from '@/components/approvals/inbox'
+import {
+  ActionButton,
+  Badge,
+  EmptyState,
+  MetricCard,
+  PageShell,
+  Panel,
+  PanelHeader,
+  StatusDot,
+} from '@/components/dashboard/cockpit-ui'
+
+interface MonitorAlert {
+  id: number
+  monitorId: string
+  monitorName: string
+  severity: string
+  message: string
+  value: string | null
+  acknowledged: number
+  createdAt: string
+}
+
+interface ActivityEvent {
+  id: number
+  eventType: string
+  actorType: string
+  actorId: string
+  targetType: string | null
+  targetId: string | null
+  summary: string
+  detailJson: string | null
+  conversationId: string | null
+  jobId: string | null
+  costUsd: number
+  createdAt: string
+}
+
+interface ActiveAgent {
+  id: string
+  slug: string
+  name: string
+  title: string
+  pillar: string
+  description: string
+  icon: string
+  archetype: string | null
+}
+
+interface CostSummary {
+  totalUsd: number
+  byModel: Record<string, number>
+  byDay: Record<string, number>
+  tokenCount: { input: number; output: number }
+}
+
+interface TodayData {
+  alerts: MonitorAlert[]
+  pendingApprovals: number
+  recentActivity: ActivityEvent[]
+  todayCost: CostSummary
+  activeAgents: ActiveAgent[]
+  todayEventCount: number
+}
+
+const EVENT_TYPE_STYLES: Record<string, { icon: string; tone: 'blue' | 'cyan' | 'emerald' | 'rose' | 'amber' | 'neutral' }> = {
+  conversation: { icon: 'Conversation', tone: 'blue' },
+  tool_call: { icon: 'Tool Call', tone: 'cyan' },
+  approval: { icon: 'Approval', tone: 'emerald' },
+  error: { icon: 'Error', tone: 'rose' },
+  job_start: { icon: 'Job Start', tone: 'cyan' },
+  job_complete: { icon: 'Complete', tone: 'emerald' },
+  job_fail: { icon: 'Failed', tone: 'rose' },
+  cost: { icon: 'Cost', tone: 'amber' },
+}
+
+function relativeTime(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime()
+  const seconds = Math.floor(diff / 1000)
+  if (seconds < 60) return `${seconds}s ago`
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes}m ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h ago`
+  const days = Math.floor(hours / 24)
+  return `${days}d ago`
+}
+
+function formatCost(usd: number): string {
+  if (usd === 0) return '$0.00'
+  if (usd < 0.01) return `$${usd.toFixed(4)}`
+  return `$${usd.toFixed(2)}`
+}
+
+function getGreeting(): string {
+  const hour = new Date().getHours()
+  if (hour < 12) return 'Good morning'
+  if (hour < 18) return 'Good afternoon'
+  return 'Good evening'
+}
+
+function formatDate(): string {
+  return new Date().toLocaleDateString('en-US', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  })
+}
+
+function getSeverityTone(severity: string): 'rose' | 'amber' | 'blue' {
+  if (severity === 'critical' || severity === 'error') return 'rose'
+  if (severity === 'warning') return 'amber'
+  return 'blue'
+}
+
+export default function TodayPage() {
+  const [data, setData] = useState<TodayData | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  const fetchData = useCallback(async () => {
+    try {
+      const res = await fetch('/api/today')
+      const json = await res.json()
+      if (json.success) {
+        setData(json.data)
+      }
+    } catch {
+      // Silently retry on next poll.
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    fetchData()
+    const interval = setInterval(fetchData, 30000)
+    return () => clearInterval(interval)
+  }, [fetchData])
+
+  if (loading) {
+    return (
+      <div className="grid min-h-screen place-items-center">
+        <div className="h-10 w-10 animate-spin rounded-full border-2 border-cyan-400 border-t-transparent" />
+      </div>
+    )
+  }
+
+  if (!data) {
+    return (
+      <div className="grid min-h-screen place-items-center px-4">
+        <EmptyState
+          title="Dashboard unavailable"
+          description="Blade couldn't load today's control-center data. Try refreshing in a moment."
+        />
+      </div>
+    )
+  }
+
+  const leadAlert = data.alerts[0]
+
+  return (
+    <PageShell
+      eyebrow="Today"
+      title={`${getGreeting()}, Emeka.`}
+      description={`${formatDate()} — this is the operational snapshot of what Blade is watching, what needs approval, and where momentum is building.`}
+      actions={
+        <>
+          <ActionButton href="/">Open Chat</ActionButton>
+          <ActionButton href="/runs" tone="secondary">Live Runs</ActionButton>
+        </>
+      }
+    >
+      <div className="grid gap-4 lg:grid-cols-[1.6fr_0.9fr]">
+        <Panel glow="cyan" className="overflow-hidden">
+          <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-cyan-400/40 to-transparent" />
+          <PanelHeader
+            eyebrow="Attention Center"
+            title={leadAlert ? leadAlert.monitorName : 'All systems stable'}
+            description={
+              leadAlert
+                ? leadAlert.message
+                : 'No active alerts right now. Blade is monitoring the business and keeping the board clear.'
+            }
+            aside={<Badge tone={leadAlert ? getSeverityTone(leadAlert.severity) : 'emerald'}>{leadAlert ? leadAlert.severity : 'stable'}</Badge>}
+          />
+
+          <div className="grid gap-4 md:grid-cols-3">
+            <MetricCard
+              label="Events Today"
+              value={data.todayEventCount}
+              hint="Everything Blade surfaced, executed, or logged."
+              accent="cyan"
+            />
+            <MetricCard
+              label="Pending Approvals"
+              value={data.pendingApprovals}
+              hint={data.pendingApprovals > 0 ? 'Human decisions are holding work back.' : 'No decisions waiting on you.'}
+              accent={data.pendingApprovals > 0 ? 'amber' : 'emerald'}
+            />
+            <MetricCard
+              label="Today's Cost"
+              value={formatCost(data.todayCost.totalUsd)}
+              hint={`${data.todayCost.tokenCount.input + data.todayCost.tokenCount.output} total tokens`}
+              accent="blue"
+            />
+          </div>
+        </Panel>
+
+        <Panel glow="emerald">
+          <PanelHeader
+            eyebrow="System Status"
+            title="Live posture"
+            description="A quick pulse check across the workforce."
+          />
+          <div className="space-y-4">
+            <div className="flex items-center justify-between rounded-[1.3rem] border border-white/10 bg-zinc-950/50 px-4 py-3">
+              <div>
+                <p className="text-xs uppercase tracking-[0.18em] text-zinc-500">Active agents</p>
+                <p className="mt-1 text-2xl font-semibold text-zinc-100">{data.activeAgents.length}</p>
+              </div>
+              <StatusDot tone={data.activeAgents.length > 0 ? 'emerald' : 'neutral'} />
+            </div>
+            <div className="flex items-center justify-between rounded-[1.3rem] border border-white/10 bg-zinc-950/50 px-4 py-3">
+              <div>
+                <p className="text-xs uppercase tracking-[0.18em] text-zinc-500">Alert pressure</p>
+                <p className="mt-1 text-2xl font-semibold text-zinc-100">{data.alerts.length}</p>
+              </div>
+              <StatusDot tone={data.alerts.length > 0 ? 'amber' : 'emerald'} />
+            </div>
+            <div className="rounded-[1.3rem] border border-white/10 bg-gradient-to-br from-white/[0.05] to-cyan-400/[0.03] p-4">
+              <p className="text-xs uppercase tracking-[0.18em] text-zinc-500">Recommended move</p>
+              <p className="mt-2 text-sm leading-6 text-zinc-300">
+                {data.pendingApprovals > 0
+                  ? 'Clear approvals first to unblock execution across active agents.'
+                  : data.alerts.length > 0
+                    ? 'Review the newest alert and assign follow-up before the next cycle.'
+                    : 'Use the quiet board to kick off higher-leverage work while the system is clear.'}
+              </p>
+            </div>
+          </div>
+        </Panel>
+      </div>
+
+      <div className="mt-4 grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
+        <Panel>
+          <PanelHeader
+            eyebrow="Recent Activity"
+            title="What changed most recently"
+            description="A live operational feed of what Blade has been doing."
+            aside={
+              <Link href="/runs" className="text-sm text-cyan-300 transition-colors hover:text-cyan-200">
+                View full timeline
+              </Link>
+            }
+          />
+
+          {data.recentActivity.length === 0 ? (
+            <EmptyState
+              title="No activity yet"
+              description="As agents act, investigate, and finish work, the most important moments will land here."
+            />
+          ) : (
+            <div className="space-y-3">
+              {data.recentActivity.map((event) => {
+                const style = EVENT_TYPE_STYLES[event.eventType] ?? { icon: 'Event', tone: 'neutral' as const }
+                return (
+                  <div
+                    key={event.id}
+                    className="rounded-[1.3rem] border border-white/10 bg-zinc-950/45 px-4 py-4 transition-colors hover:border-white/20"
+                  >
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="min-w-0 flex-1">
+                        <div className="mb-2 flex flex-wrap items-center gap-2">
+                          <Badge tone={style.tone}>{style.icon}</Badge>
+                          <span className="text-xs uppercase tracking-[0.18em] text-zinc-500">
+                            {event.actorId || 'Blade'}
+                          </span>
+                        </div>
+                        <p className="text-sm leading-6 text-zinc-200">{event.summary}</p>
+                        {event.jobId ? (
+                          <p className="mt-2 text-xs text-zinc-500">Job {event.jobId}</p>
+                        ) : null}
+                      </div>
+                      <div className="text-right text-xs text-zinc-500">
+                        <div>{relativeTime(event.createdAt)}</div>
+                        {event.costUsd > 0 ? (
+                          <div className="mt-2 text-amber-300">{formatCost(event.costUsd)}</div>
+                        ) : null}
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </Panel>
+
+        <div className="space-y-4">
+          <Panel glow={data.alerts.length > 0 ? 'amber' : 'emerald'}>
+            <PanelHeader
+              eyebrow="Alerts"
+              title={data.alerts.length > 0 ? 'Watch items' : 'System clear'}
+              description={
+                data.alerts.length > 0
+                  ? 'Blade has surfaced issues that may need intervention.'
+                  : 'No active alerts. Monitoring is calm right now.'
+              }
+            />
+            {data.alerts.length === 0 ? (
+              <EmptyState
+                title="No active alerts"
+                description="Your monitors are quiet. Blade will raise anything material here."
+              />
+            ) : (
+              <div className="space-y-3">
+                {data.alerts.slice(0, 3).map((alert) => (
+                  <div key={alert.id} className="rounded-[1.3rem] border border-white/10 bg-zinc-950/45 px-4 py-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="mb-2 flex flex-wrap items-center gap-2">
+                          <Badge tone={getSeverityTone(alert.severity)}>{alert.severity}</Badge>
+                          <span className="text-xs uppercase tracking-[0.18em] text-zinc-500">{alert.monitorName}</span>
+                        </div>
+                        <p className="text-sm leading-6 text-zinc-200">{alert.message}</p>
+                      </div>
+                      <span className="text-xs text-zinc-500">{relativeTime(alert.createdAt)}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Panel>
+
+          <Panel>
+            <PanelHeader
+              eyebrow="Active Agents"
+              title="Who is on deck"
+              description="A quick roster of the currently active workforce."
+            />
+            {data.activeAgents.length === 0 ? (
+              <EmptyState
+                title="No active agents"
+                description="Onboard employees and activate them to populate the roster."
+              />
+            ) : (
+              <div className="space-y-3">
+                {data.activeAgents.slice(0, 4).map((agent) => (
+                  <Link
+                    key={agent.id}
+                    href={`/agents/${agent.slug}`}
+                    className="flex items-center gap-3 rounded-[1.25rem] border border-white/10 bg-zinc-950/45 px-4 py-3 transition-colors hover:border-cyan-400/20 hover:bg-white/[0.05]"
+                  >
+                    <span className="text-2xl">{agent.icon || '🤖'}</span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <p className="truncate text-sm font-medium text-zinc-100">{agent.name}</p>
+                        <StatusDot tone="emerald" />
+                      </div>
+                      <p className="truncate text-xs text-zinc-500">{agent.title}</p>
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            )}
+          </Panel>
+        </div>
+      </div>
+
+      {data.pendingApprovals > 0 ? (
+        <div className="mt-4">
+          <Panel glow="amber">
+            <PanelHeader
+              eyebrow="Approvals"
+              title="Decisions waiting on you"
+              description="Approve or reject the actions that require human sign-off."
+            />
+            <ApprovalsInbox />
+          </Panel>
+        </div>
+      ) : null}
+    </PageShell>
+  )
+}

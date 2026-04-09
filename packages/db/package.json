@@ -14,15 +14,16 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "test": "vitest run"
   },
   "dependencies": {
     "@blade/shared": "*",
-    "better-sqlite3": "^11.8.0",
-    "drizzle-orm": "^0.39.0"
+    "better-sqlite3": "^11.8.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",
-    "typescript": "^5.8.0"
+    "typescript": "^5.8.0",
+    "vitest": "^3.1.0"
   }
 }

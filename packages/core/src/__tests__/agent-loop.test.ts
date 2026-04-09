@@ -5,8 +5,8 @@ import type { AgentLoopOptions, ModelResponse, ContentBlock, ExecutionContext } 
 vi.mock('../model-provider.js', () => ({
   callModel: vi.fn(),
   streamModel: vi.fn(),
-  resolveModelConfig: vi.fn(() => ({ provider: 'anthropic', modelId: 'test-model', apiKey: 'test-key' })),
-  resolveSmartModelConfig: vi.fn(() => ({ provider: 'anthropic', modelId: 'test-model', apiKey: 'test-key' })),
+  resolveModelConfig: vi.fn(() => ({ provider: 'claude-cli', modelId: 'test-model', apiKey: 'test-key' })),
+  resolveSmartModelConfig: vi.fn(() => ({ provider: 'claude-cli', modelId: 'test-model', apiKey: 'test-key' })),
 }))
 
 vi.mock('../tool-registry.js', () => ({
@@ -224,21 +224,20 @@ describe('agent-loop: runAgentLoop', () => {
     )
   })
 
-  it('calls onTextDelta for streaming', async () => {
+  it('calls onTextDelta for text response', async () => {
     const onTextDelta = vi.fn()
 
-    // For non-streaming path (claude-cli provider in resolveModelConfig returns provider that
-    // disables streaming, so callModel is used). The agent-loop emits onTextDelta with the full
-    // text when not streaming.
-    mockedCallModel.mockResolvedValueOnce(makeTextResponse('Streamed text'))
+    // With provider: 'claude-cli', streaming is disabled and callModel is used.
+    // The agent-loop emits onTextDelta with the full text when not streaming.
+    mockedCallModel.mockResolvedValueOnce(makeTextResponse('Full text'))
 
     await runAgentLoop(makeBaseOptions({ streaming: true, onTextDelta }))
 
-    // Since the mock resolveModelConfig returns provider: 'claude-cli', streaming is disabled
-    // and the loop falls back to callModel. It then emits the full text via onTextDelta.
+    // claude-cli provider disables streaming, so loop falls back to callModel
+    // and emits the full text via onTextDelta.
     expect(onTextDelta).toHaveBeenCalled()
     const allText = onTextDelta.mock.calls.map((c: unknown[]) => c[0]).join('')
-    expect(allText).toContain('Streamed text')
+    expect(allText).toContain('Full text')
   })
 
   it('handles model errors with retry', async () => {

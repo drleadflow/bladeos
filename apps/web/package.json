@@ -9,6 +9,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@blade/conversation": "*",
     "@blade/core": "*",
     "@blade/db": "*",
     "@blade/shared": "*",

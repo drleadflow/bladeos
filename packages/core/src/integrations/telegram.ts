@@ -1,8 +1,8 @@
 import TelegramBot from 'node-telegram-bot-api'
-import { initializeDb, conversations, messages, memories, costEntries } from '@blade/db'
-import { runAgentLoop, getAllToolDefinitions, buildMemoryAugmentedPrompt } from '../index.js'
+import { initializeDb, conversations, messages, memories, costEntries, activityEvents } from '@blade/db'
+import { getAllToolDefinitions, buildMemoryAugmentedPrompt, runConversationReply, calculateCost, loadPersonality } from '../index.js'
 import { resolveSmartModelConfig } from '../model-provider.js'
-import type { AgentMessage, ExecutionContext } from '../types.js'
+import type { AgentLoopResult, AgentMessage, ExecutionContext } from '../types.js'
 import { logger } from '@blade/shared'
 import { speechToText } from '../voice/deepgram-stt.js'
 import { textToSpeech } from '../voice/cartesia-tts.js'
@@ -26,6 +26,10 @@ You are communicating via Telegram. IMPORTANT formatting rules:
 - Be conversational and natural, like texting a friend who happens to be incredibly capable.
 - Never mention Claude, Claude Code, or any internal system details.
 - You are Blade. That's it.`
+
+const MAX_CACHED_CHATS = 100
+const MAX_HISTORY_LENGTH = 50
+const TELEGRAM_FALLBACK_RESPONSE = 'I processed your request but couldn\'t generate a response. Could you try rephrasing?'
 
 /**
  * Look up the conversation ID for a Telegram chat from the DB.
@@ -52,18 +56,21 @@ function loadHistoryFromDb(conversationId: string): AgentMessage[] {
 /**
  * Clean up agent response for Telegram — strip internal metadata, markdown, system messages.
  */
-function cleanResponse(text: string): string {
+export function cleanResponse(text: string): string {
   let cleaned = text
-  // Remove "Claude Code finished in X / Reason: Y" lines
+  // Remove all Claude/system metadata
   cleaned = cleaned.replace(/Claude Code finished in.*\n?/gi, '')
-  cleaned = cleaned.replace(/Reason: (completed|end_turn|tool_use|error).*\n?/gi, '')
+  cleaned = cleaned.replace(/Reason: ?(completed|end_turn|tool_use|error|success).*\n?/gi, '')
+  cleaned = cleaned.replace(/^Claude Code.*$/gmi, '')
+  cleaned = cleaned.replace(/^Blade Super Agent.*completed.*$/gmi, '')
+  cleaned = cleaned.replace(/\bfinished in\b.*\n?/gi, '')
   // Remove markdown formatting
-  cleaned = cleaned.replace(/\*\*(.*?)\*\*/g, '$1')  // **bold** → bold
-  cleaned = cleaned.replace(/\*(.*?)\*/g, '$1')       // *italic* → italic
-  cleaned = cleaned.replace(/#{1,6}\s/g, '')           // ## headers → plain
-  cleaned = cleaned.replace(/```[\s\S]*?```/g, (m) => m.replace(/```\w*\n?/g, '').trim()) // code blocks → plain
-  cleaned = cleaned.replace(/`([^`]+)`/g, '$1')        // `inline code` → plain
-  // Remove leading/trailing whitespace and extra newlines
+  cleaned = cleaned.replace(/\*\*(.*?)\*\*/g, '$1')
+  cleaned = cleaned.replace(/\*(.*?)\*/g, '$1')
+  cleaned = cleaned.replace(/#{1,6}\s/g, '')
+  cleaned = cleaned.replace(/```[\s\S]*?```/g, (m) => m.replace(/```\w*\n?/g, '').trim())
+  cleaned = cleaned.replace(/`([^`]+)`/g, '$1')
+  // Clean up whitespace
   cleaned = cleaned.replace(/\n{3,}/g, '\n\n').trim()
   return cleaned
 }
@@ -72,7 +79,7 @@ function cleanResponse(text: string): string {
  * Split a long message into chunks that respect Telegram's 4096 character limit.
  * Splits on newline boundaries when possible.
  */
-function splitMessage(text: string): string[] {
+export function splitMessage(text: string): string[] {
   if (text.length <= TELEGRAM_MAX_MESSAGE_LENGTH) {
     return [text]
   }
@@ -100,6 +107,21 @@ function splitMessage(text: string): string[] {
   return chunks
 }
 
+/**
+ * Evict the oldest entry from a Map if it exceeds maxSize.
+ * Maps iterate in insertion order, so the first key is the oldest.
+ */
+function evictOldest<K, V>(map: Map<K, V>, maxSize: number): void {
+  while (map.size > maxSize) {
+    const oldest = map.keys().next().value
+    if (oldest !== undefined) {
+      map.delete(oldest)
+    } else {
+      break
+    }
+  }
+}
+
 /** In-memory caches that hydrate from DB on first access */
 const chatConversations = new Map<string, string>()
 const chatHistories = new Map<string, AgentMessage[]>()
@@ -118,6 +140,8 @@ function getOrCreateConversation(chatId: string): string {
   if (fromDb) {
     chatConversations.set(chatId, fromDb)
     chatHistories.set(chatId, loadHistoryFromDb(fromDb))
+    evictOldest(chatConversations, MAX_CACHED_CHATS)
+    evictOldest(chatHistories, MAX_CACHED_CHATS)
     return fromDb
   }
 
@@ -125,7 +149,183 @@ function getOrCreateConversation(chatId: string): string {
   const conv = conversations.create(`Telegram chat ${chatId}`)
   chatConversations.set(chatId, conv.id)
   chatHistories.set(chatId, [])
+  evictOldest(chatConversations, MAX_CACHED_CHATS)
+  evictOldest(chatHistories, MAX_CACHED_CHATS)
   return conv.id
+}
+
+function trimHistory(history: AgentMessage[]): AgentMessage[] {
+  return history.length > MAX_HISTORY_LENGTH ? history.slice(-MAX_HISTORY_LENGTH) : history
+}
+
+function cacheHistory(chatId: string, history: AgentMessage[]): void {
+  chatHistories.set(chatId, trimHistory(history))
+  evictOldest(chatHistories, MAX_CACHED_CHATS)
+}
+
+function clip(text: string, max = 120): string {
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text
+}
+
+function buildTelegramPrompt(userText: string): string {
+  const base = buildMemoryAugmentedPrompt(SYSTEM_PROMPT, userText)
+  const personality = loadPersonality()
+  return personality ? `${personality}\n\n${base}` : base
+}
+
+function getTokenTotals(result: AgentLoopResult): { inputTokens: number; outputTokens: number } {
+  return result.turns.reduce(
+    (totals, turn) => ({
+      inputTokens: totals.inputTokens + turn.response.inputTokens,
+      outputTokens: totals.outputTokens + turn.response.outputTokens,
+    }),
+    { inputTokens: 0, outputTokens: 0 }
+  )
+}
+
+function recordTelegramActivity(params: {
+  chatId: string
+  conversationId: string
+  eventType: string
+  summary: string
+  detail?: unknown
+  costUsd?: number
+}): void {
+  try {
+    activityEvents.emit({
+      eventType: params.eventType,
+      actorType: 'system',
+      actorId: `telegram:${params.chatId}`,
+      summary: params.summary,
+      detail: params.detail,
+      targetType: 'conversation',
+      targetId: params.conversationId,
+      conversationId: params.conversationId,
+      costUsd: params.costUsd,
+    })
+  } catch {
+    // Activity logging should never break the bot path.
+  }
+}
+
+async function executeTelegramConversation(params: {
+  bot: TelegramBot
+  chatId: string
+  userText: string
+  sendVoiceReply?: boolean
+}): Promise<void> {
+  const { bot, chatId, userText, sendVoiceReply = false } = params
+  const conversationId = getOrCreateConversation(chatId)
+  const history = [...(chatHistories.get(chatId) ?? [])]
+  const tools = getAllToolDefinitions()
+  const augmentedPrompt = buildTelegramPrompt(userText)
+
+  history.push({ role: 'user', content: userText })
+
+  messages.create({
+    conversationId,
+    role: 'user',
+    content: userText,
+  })
+
+  recordTelegramActivity({
+    chatId,
+    conversationId,
+    eventType: 'conversation',
+    summary: `Telegram request: ${clip(userText, 90)}`,
+    detail: { channel: 'telegram', sendVoiceReply },
+  })
+
+  const modelConfig = resolveSmartModelConfig('standard', { needsToolCalling: true })
+  const context: ExecutionContext = {
+    conversationId,
+    userId: `telegram-${chatId}`,
+    modelId: modelConfig.modelId,
+    modelConfig,
+    maxIterations: 15,
+    costBudget: 0,
+  }
+
+  await bot.sendChatAction(Number(chatId), 'typing')
+
+  const { responseText, result } = await runConversationReply({
+    systemPrompt: augmentedPrompt,
+    messages: history,
+    tools,
+    context,
+    fallbackText: TELEGRAM_FALLBACK_RESPONSE,
+    responseLabel: sendVoiceReply ? 'telegram voice response' : 'telegram text response',
+  })
+
+  const cleanedResponse = cleanResponse(responseText || TELEGRAM_FALLBACK_RESPONSE)
+
+  for (const chunk of splitMessage(cleanedResponse)) {
+    await bot.sendMessage(Number(chatId), chunk)
+  }
+
+  if (sendVoiceReply) {
+    try {
+      const voiceBuffer = await textToSpeech(cleanedResponse.slice(0, 2000))
+      await bot.sendVoice(
+        Number(chatId),
+        voiceBuffer,
+        {},
+        { filename: 'response.mp3', contentType: 'audio/mpeg' }
+      )
+    } catch (ttsErr) {
+      logger.error('Telegram', `TTS reply error: ${ttsErr instanceof Error ? ttsErr.message : String(ttsErr)}`)
+    }
+  }
+
+  history.push({ role: 'assistant', content: cleanedResponse })
+  cacheHistory(chatId, history)
+
+  const tokenTotals = getTokenTotals(result)
+  messages.create({
+    conversationId,
+    role: 'assistant',
+    content: cleanedResponse,
+    model: modelConfig.modelId,
+    inputTokens: tokenTotals.inputTokens,
+    outputTokens: tokenTotals.outputTokens,
+  })
+
+  if (tokenTotals.inputTokens > 0 || tokenTotals.outputTokens > 0) {
+    const cost = calculateCost(modelConfig.modelId, tokenTotals.inputTokens, tokenTotals.outputTokens)
+    costEntries.record({
+      ...cost,
+      conversationId,
+    })
+  }
+
+  for (const turn of result.turns) {
+    for (const toolCall of turn.toolCalls) {
+      recordTelegramActivity({
+        chatId,
+        conversationId,
+        eventType: 'tool_call',
+        summary: `Telegram tool: ${toolCall.toolName} ${toolCall.success ? '✓' : '✗'}`,
+        detail: {
+          toolName: toolCall.toolName,
+          success: toolCall.success,
+          durationMs: toolCall.durationMs,
+        },
+      })
+    }
+  }
+
+  recordTelegramActivity({
+    chatId,
+    conversationId,
+    eventType: 'conversation_reply',
+    summary: `Telegram reply: ${clip(cleanedResponse, 100)}`,
+    detail: {
+      stopReason: result.stopReason,
+      toolCalls: result.totalToolCalls,
+      sendVoiceReply,
+    },
+    costUsd: result.totalCost,
+  })
 }
 
 /**
@@ -276,63 +476,27 @@ export function startTelegramBot(token: string, allowedChatIds?: string[]): Tele
       }
 
       await bot.sendMessage(msg.chat.id, `📝 Heard: ${transcript}`)
-
-      // 3. Run the transcription through the normal chat flow
-      const conversationId = getOrCreateConversation(chatId)
-      const history = chatHistories.get(chatId) ?? []
-      const tools = getAllToolDefinitions()
-      const augmentedPrompt = buildMemoryAugmentedPrompt(SYSTEM_PROMPT, transcript)
-
-      history.push({ role: 'user', content: transcript })
-      messages.create({ conversationId, role: 'user', content: transcript })
-
-      const chatModelConfig = resolveSmartModelConfig('standard')
-
-      const context: ExecutionContext = {
-        conversationId,
-        userId: `telegram-${chatId}`,
-        modelId: chatModelConfig.modelId,
-        maxIterations: 15,
-        costBudget: 0,
-      }
-
-      await bot.sendChatAction(msg.chat.id, 'typing')
-
-      const result = await runAgentLoop({
-        systemPrompt: augmentedPrompt,
-        messages: history,
-        tools,
-        context,
-        onToolCall: async (tc) => {
-          try {
-            await bot.sendMessage(msg.chat.id, `🔧 Using ${tc.toolName}...`)
-          } catch {
-            // Non-critical
-          }
-        },
+      recordTelegramActivity({
+        chatId,
+        conversationId: getOrCreateConversation(chatId),
+        eventType: 'conversation',
+        summary: `Voice transcribed: ${clip(transcript, 90)}`,
+        detail: { channel: 'telegram', source: 'voice' },
       })
 
-      const rawResponse = result.finalResponse || 'I processed your request but have no text response.'
-      const responseText = cleanResponse(rawResponse)
+      await executeTelegramConversation({
+        bot,
+        chatId,
+        userText: transcript,
+        sendVoiceReply: true,
+      })
 
-      // Send text response
-      for (const chunk of splitMessage(responseText)) {
-        await bot.sendMessage(msg.chat.id, chunk)
-      }
-
-      // 4. Send voice reply using Cartesia TTS
+      // Award XP for voice interaction (extra XP on top of conversation)
       try {
-        const voiceBuffer = await textToSpeech(responseText.slice(0, 2000))
-        await bot.sendVoice(msg.chat.id, voiceBuffer, {}, { filename: 'response.mp3', contentType: 'audio/mpeg' })
-      } catch (ttsErr) {
-        logger.error('Telegram', `TTS reply error: ${ttsErr instanceof Error ? ttsErr.message : String(ttsErr)}`)
-        // Non-critical — text response was already sent
-      }
-
-      // Update history
-      history.push({ role: 'assistant', content: responseText })
-      chatHistories.set(chatId, history)
-      messages.create({ conversationId, role: 'assistant', content: responseText, model: chatModelConfig.modelId })
+        const { awardXP, XP_AWARDS } = await import('../gamification/index.js')
+        awardXP({ action: 'completed_task', xp: XP_AWARDS.completed_task })
+        awardXP({ action: 'first_tool_use_of_day', xp: XP_AWARDS.first_tool_use_of_day })
+      } catch { /* gamification not ready */ }
 
     } catch (err) {
       logger.error('Telegram', `Voice error: ${err instanceof Error ? err.message : String(err)}`)
@@ -357,72 +521,17 @@ export function startTelegramBot(token: string, allowedChatIds?: string[]): Tele
     if (!userText) return
 
     try {
-      const conversationId = getOrCreateConversation(chatId)
-      const history = chatHistories.get(chatId) ?? []
-      const tools = getAllToolDefinitions()
-
-      // Build memory-augmented prompt
-      const augmentedPrompt = buildMemoryAugmentedPrompt(SYSTEM_PROMPT, userText)
-
-      // Add user message to history
-      history.push({ role: 'user', content: userText })
-
-      // Store user message in DB
-      messages.create({
-        conversationId,
-        role: 'user',
-        content: userText,
+      await executeTelegramConversation({
+        bot,
+        chatId,
+        userText,
       })
 
-      const textModelConfig = resolveSmartModelConfig('standard')
-
-      const context: ExecutionContext = {
-        conversationId,
-        userId: `telegram-${chatId}`,
-        modelId: textModelConfig.modelId,
-        maxIterations: 15,
-        costBudget: 0,
-      }
-
-      // Send typing indicator
-      await bot.sendChatAction(msg.chat.id, 'typing')
-
-      const result = await runAgentLoop({
-        systemPrompt: augmentedPrompt,
-        messages: history,
-        tools,
-        context,
-        onToolCall: async (tc) => {
-          try {
-            await bot.sendMessage(
-              msg.chat.id,
-              `🔧 Using ${tc.toolName}...`
-            )
-          } catch {
-            // Non-critical — don't break the loop
-          }
-        },
-      })
-
-      const rawText = result.finalResponse || 'I processed your request but have no text response.'
-      const responseText = cleanResponse(rawText)
-
-      // Send response, splitting if needed
-      for (const chunk of splitMessage(responseText)) {
-        await bot.sendMessage(msg.chat.id, chunk)
-      }
-
-      // Add assistant response to history
-      history.push({ role: 'assistant', content: responseText })
-      chatHistories.set(chatId, history)
-
-      // Store assistant message in DB
-      messages.create({
-        conversationId,
-        role: 'assistant',
-        content: responseText,
-        model: textModelConfig.modelId,
-      })
+      // Award XP for Telegram conversation
+      try {
+        const { awardXP, XP_AWARDS } = await import('../gamification/index.js')
+        awardXP({ action: 'completed_task', xp: XP_AWARDS.completed_task })
+      } catch { /* gamification not ready */ }
 
     } catch (err) {
       logger.error('Telegram', `Message error: ${err instanceof Error ? err.message : String(err)}`)
