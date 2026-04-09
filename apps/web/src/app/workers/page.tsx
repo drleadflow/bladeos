@@ -33,6 +33,25 @@ interface WorkerSession {
   updatedAt: string
 }
 
+interface WorkerControlMetadata {
+  source?: string
+  baseBranch?: string
+  control?: {
+    requestedAction?: string
+    requestedBy?: string
+    requestedAt?: string
+  }
+}
+
+function parseWorkerMetadata(json: string | null): WorkerControlMetadata | null {
+  if (!json) return null
+  try {
+    return JSON.parse(json) as WorkerControlMetadata
+  } catch {
+    return null
+  }
+}
+
 interface WorkerDetailResponse {
   worker: WorkerSession
   job: {
@@ -90,13 +109,17 @@ export default function WorkersPage() {
   const [detail, setDetail] = useState<WorkerDetailResponse | null>(null)
   const [actionState, setActionState] = useState<{ workerId: string; action: string } | null>(null)
   const [actionMessage, setActionMessage] = useState<string | null>(null)
+  const [lastListSyncAt, setLastListSyncAt] = useState<string | null>(null)
+  const [lastDetailSyncAt, setLastDetailSyncAt] = useState<string | null>(null)
+  const [detailRefreshError, setDetailRefreshError] = useState<string | null>(null)
 
   const fetchWorkers = useCallback(async () => {
     try {
-      const res = await fetch('/api/workers')
+      const res = await fetch('/api/workers', { cache: 'no-store' })
       const json = await res.json()
       if (json.success) {
         setWorkers(json.data)
+        setLastListSyncAt(new Date().toISOString())
       }
     } catch {
       // keep current state
@@ -105,20 +128,29 @@ export default function WorkersPage() {
 
   const fetchWorkerDetail = useCallback(async (id: string) => {
     try {
-      const res = await fetch(`/api/workers/${id}`)
+      const res = await fetch(`/api/workers/${id}`, { cache: 'no-store' })
       const json = await res.json()
       if (json.success) {
         setDetail(json.data)
+        setLastDetailSyncAt(new Date().toISOString())
+        setDetailRefreshError(null)
+      } else {
+        setDetailRefreshError(json.error ?? 'Failed to refresh worker details.')
       }
     } catch {
-      setDetail(null)
+      setDetailRefreshError('Failed to refresh worker details.')
     }
   }, [])
 
   useEffect(() => {
     fetchWorkers()
-    const interval = setInterval(fetchWorkers, 5000)
-    return () => clearInterval(interval)
+    const interval = setInterval(fetchWorkers, 4000)
+    const onFocus = () => fetchWorkers()
+    window.addEventListener('focus', onFocus)
+    return () => {
+      clearInterval(interval)
+      window.removeEventListener('focus', onFocus)
+    }
   }, [fetchWorkers])
 
   useEffect(() => {
@@ -126,8 +158,17 @@ export default function WorkersPage() {
     fetchWorkerDetail(expandedId)
     const interval = setInterval(() => {
       fetchWorkerDetail(expandedId)
-    }, 4000)
-    return () => clearInterval(interval)
+    }, 3000)
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        fetchWorkerDetail(expandedId)
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => {
+      clearInterval(interval)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+    }
   }, [expandedId, fetchWorkerDetail])
 
   const metrics = useMemo(() => {
@@ -136,6 +177,8 @@ export default function WorkersPage() {
     const failed = workers.filter((worker) => ['failed', 'stopped'].includes(worker.status)).length
     return { live, docker, failed }
   }, [workers])
+
+  const selectedMetadata = useMemo(() => parseWorkerMetadata(detail?.worker.metadataJson ?? null), [detail?.worker.metadataJson])
 
   async function handleExpand(id: string) {
     if (expandedId === id) {
@@ -151,6 +194,7 @@ export default function WorkersPage() {
   async function handleAction(worker: WorkerSession, action: 'stop' | 'retry') {
     setActionState({ workerId: worker.id, action })
     setActionMessage(null)
+    setDetailRefreshError(null)
     try {
       const res = await fetch(`/api/workers/${worker.id}`, {
         method: 'POST',
@@ -198,10 +242,21 @@ export default function WorkersPage() {
             eyebrow="Sessions"
             title="Worker registry"
             description="This is the layer a mobile app would supervise: runtime, branch, container, freshness, and the most recent summary."
+            aside={
+              <div className="flex flex-col items-end gap-1 text-[11px] uppercase tracking-[0.18em] text-zinc-500">
+                <span>{lastListSyncAt ? `Synced ${relativeTime(lastListSyncAt)}` : 'Waiting for sync'}</span>
+                <span>{workers.length} workers tracked</span>
+              </div>
+            }
           />
           {actionMessage ? (
             <div className="mb-4 rounded-2xl border border-cyan-400/20 bg-cyan-400/10 px-4 py-3 text-sm text-cyan-100">
               {actionMessage}
+            </div>
+          ) : null}
+          {detailRefreshError ? (
+            <div className="mb-4 rounded-2xl border border-rose-400/20 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">
+              {detailRefreshError}
             </div>
           ) : null}
 
@@ -241,6 +296,9 @@ export default function WorkersPage() {
                       <div className="text-right text-xs text-zinc-500">
                         <div>Updated {relativeTime(worker.updatedAt)}</div>
                         <div className="mt-2">Seen {relativeTime(worker.lastSeenAt)}</div>
+                        <div className="mt-2">
+                          {expandedId === worker.id ? 'Watching live' : 'Polling'}
+                        </div>
                       </div>
                     </div>
                   </button>
@@ -274,6 +332,36 @@ export default function WorkersPage() {
                             </p>
                           </div>
 
+                          <div className="rounded-[1.1rem] border border-white/10 bg-zinc-950/45 p-4">
+                            <p className="text-[11px] uppercase tracking-[0.18em] text-zinc-500">Control state</p>
+                            {selectedMetadata ? (
+                              <div className="mt-3 space-y-2 text-sm text-zinc-300">
+                                <div className="flex items-center justify-between gap-3">
+                                  <span className="text-zinc-500">Source</span>
+                                  <span>{selectedMetadata.source ?? '--'}</span>
+                                </div>
+                                <div className="flex items-center justify-between gap-3">
+                                  <span className="text-zinc-500">Base branch</span>
+                                  <span>{selectedMetadata.baseBranch ?? '--'}</span>
+                                </div>
+                                <div className="flex items-center justify-between gap-3">
+                                  <span className="text-zinc-500">Requested action</span>
+                                  <span>{selectedMetadata.control?.requestedAction ?? 'none'}</span>
+                                </div>
+                                <div className="flex items-center justify-between gap-3">
+                                  <span className="text-zinc-500">Requested by</span>
+                                  <span>{selectedMetadata.control?.requestedBy ?? '--'}</span>
+                                </div>
+                                <div className="flex items-center justify-between gap-3">
+                                  <span className="text-zinc-500">Requested at</span>
+                                  <span>{selectedMetadata.control?.requestedAt ? relativeTime(selectedMetadata.control.requestedAt) : '--'}</span>
+                                </div>
+                              </div>
+                            ) : (
+                              <EmptyState title="No control metadata" description="This worker has not recorded control state yet." />
+                            )}
+                          </div>
+
                           <div className="grid grid-cols-2 gap-3">
                             <div className="rounded-[1rem] border border-white/10 bg-zinc-950/45 p-3">
                               <p className="text-[11px] uppercase tracking-[0.18em] text-zinc-500">Runtime</p>
@@ -291,6 +379,22 @@ export default function WorkersPage() {
                               <p className="text-[11px] uppercase tracking-[0.18em] text-zinc-500">Conversation</p>
                               <p className="mt-2 text-sm text-zinc-100">{detail.worker.conversationId ? detail.worker.conversationId.slice(0, 12) : '--'}</p>
                             </div>
+                          </div>
+
+                          <div className="rounded-[1.1rem] border border-white/10 bg-zinc-950/45 p-4 text-sm text-zinc-300">
+                            <p className="text-[11px] uppercase tracking-[0.18em] text-zinc-500">Operator note</p>
+                            <p className="mt-2 leading-6">
+                              {detail.worker.status === 'stopping'
+                                ? 'A stop has been requested and Blade is waiting for the next safe checkpoint.'
+                                : detail.worker.status === 'stopped'
+                                  ? 'This worker was stopped cleanly and can be retried from the control panel.'
+                                  : detail.worker.status === 'failed'
+                                    ? 'This worker failed and is eligible for a retry once you’re ready.'
+                                    : 'This worker is live. Keep an eye on logs and recent activity for the fastest read on progress.'}
+                            </p>
+                            <p className="mt-3 text-xs text-zinc-500">
+                              Detail synced {lastDetailSyncAt ? relativeTime(lastDetailSyncAt) : '--'}
+                            </p>
                           </div>
 
                           {detail.job ? (
