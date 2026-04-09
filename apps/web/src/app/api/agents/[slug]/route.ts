@@ -1,7 +1,7 @@
-import { getDb, initializeDb, kpiDefinitions, kpiMeasurements, routines, activityEvents } from '@blade/db'
+import { getDb, initializeDb, kpiDefinitions, kpiMeasurements, routines, activityEvents, approvals } from '@blade/db'
 import { logger } from '@blade/shared'
 import { requireAuth, unauthorizedResponse } from '@/lib/auth'
-import { ensureEmployeeDefinitionsLoaded } from '@/lib/employee-definitions'
+import { ensureEmployeeDefinitionsLoaded, getEmployeeFrameworks } from '@/lib/employee-definitions'
 
 export const runtime = 'nodejs'
 
@@ -48,6 +48,21 @@ export async function GET(
     const latestMeasurements = kpiMeasurements.latestByEmployee(agent.slug)
     const agentRoutines = routines.listByEmployee(agent.slug)
     const recentActivity = activityEvents.list({ actorId: agent.slug, limit: 20 })
+    const frameworks = getEmployeeFrameworks(slug)
+    const employeeApprovals = approvals.listByEmployee(slug)
+
+    // Performance stats: aggregate activity by type
+    const allActivity = activityEvents.list({ actorId: agent.slug, limit: 200 })
+    const perfStats = {
+      totalEvents: allActivity.length,
+      totalCost: allActivity.reduce((sum, e) => sum + (e.costUsd ?? 0), 0),
+      byType: Object.entries(
+        allActivity.reduce<Record<string, number>>((acc, e) => {
+          acc[e.eventType] = (acc[e.eventType] ?? 0) + 1
+          return acc
+        }, {})
+      ).map(([type, count]) => ({ type, count })),
+    }
 
     return Response.json({
       success: true,
@@ -74,6 +89,9 @@ export async function GET(
         toolsJson: undefined,
       })),
       recentActivity,
+      frameworks,
+      approvals: employeeApprovals,
+      performanceStats: perfStats,
     })
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : 'Failed to get agent'

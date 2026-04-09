@@ -1061,6 +1061,22 @@ export const approvals = {
     const row = db().prepare("SELECT COUNT(*) as count FROM approvals WHERE status = 'pending'").get() as { count: number }
     return row.count
   },
+
+  listByEmployee(employeeSlug: string, limit = 20) {
+    return db().prepare(
+      `SELECT id, requested_by as requestedBy, action, tool_name as toolName, context, priority, status,
+       decided_by as decidedBy, decided_at as decidedAt, expires_at as expiresAt, created_at as createdAt
+       FROM approvals WHERE requested_by = ? ORDER BY
+       CASE status WHEN 'pending' THEN 0 ELSE 1 END,
+       CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END,
+       created_at DESC LIMIT ?`
+    ).all(employeeSlug, limit) as {
+      id: string; requestedBy: string; action: string; toolName: string | null
+      context: string | null; priority: string; status: string
+      decidedBy: string | null; decidedAt: string | null
+      expiresAt: string | null; createdAt: string
+    }[]
+  },
 }
 
 // ============================================================
