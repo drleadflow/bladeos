@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import Link from 'next/link'
 import {
   Badge,
   EmptyState,
@@ -26,18 +27,21 @@ interface ActivityEvent {
   createdAt: string
 }
 
-type FilterType = 'all' | 'conversation' | 'tool_call' | 'approval' | 'error'
+type FilterType = 'all' | 'conversation' | 'conversation_reply' | 'tool_call' | 'approval' | 'error' | 'worker_stop_requested' | 'worker_retry_requested' | 'worker_failed' | 'monitor.check'
 
 const FILTERS: { label: string; value: FilterType }[] = [
   { label: 'All', value: 'all' },
   { label: 'Conversations', value: 'conversation' },
+  { label: 'Replies', value: 'conversation_reply' },
   { label: 'Tool Calls', value: 'tool_call' },
+  { label: 'Worker Stops', value: 'worker_stop_requested' },
   { label: 'Approvals', value: 'approval' },
   { label: 'Errors', value: 'error' },
 ]
 
 const EVENT_TYPE_STYLES: Record<string, { label: string; tone: 'blue' | 'cyan' | 'emerald' | 'rose' | 'amber' | 'neutral' }> = {
   conversation: { label: 'Conversation', tone: 'blue' },
+  conversation_reply: { label: 'Reply', tone: 'emerald' },
   tool_call: { label: 'Tool Call', tone: 'cyan' },
   approval: { label: 'Approval', tone: 'emerald' },
   error: { label: 'Error', tone: 'rose' },
@@ -45,6 +49,10 @@ const EVENT_TYPE_STYLES: Record<string, { label: string; tone: 'blue' | 'cyan' |
   job_complete: { label: 'Complete', tone: 'emerald' },
   job_fail: { label: 'Failed', tone: 'rose' },
   cost: { label: 'Cost', tone: 'amber' },
+  worker_stop_requested: { label: 'Worker Stop', tone: 'amber' },
+  worker_retry_requested: { label: 'Worker Retry', tone: 'cyan' },
+  worker_failed: { label: 'Worker Failed', tone: 'rose' },
+  'monitor.check': { label: 'Monitor', tone: 'amber' },
 }
 
 function relativeTime(iso: string): string {
@@ -77,6 +85,22 @@ function parseDetail(detailJson: string | null): Record<string, string> {
   } catch {
     return {}
   }
+}
+
+function getEventHref(event: ActivityEvent): string | null {
+  if (event.targetType === 'worker' && event.targetId) {
+    return '/workers'
+  }
+  if (event.jobId) {
+    return '/jobs'
+  }
+  if (event.conversationId) {
+    return '/'
+  }
+  if (event.eventType === 'approval') {
+    return '/today'
+  }
+  return null
 }
 
 export default function RunsPage() {
@@ -121,6 +145,7 @@ export default function RunsPage() {
 
   const errorCount = events.filter((event) => event.eventType === 'error').length
   const approvalCount = events.filter((event) => event.eventType === 'approval').length
+  const workerActionCount = events.filter((event) => event.eventType.startsWith('worker_')).length
   const totalCost = events.reduce((sum, event) => sum + event.costUsd, 0)
 
   return (
@@ -136,9 +161,9 @@ export default function RunsPage() {
       }
     >
       <div className="grid gap-4 md:grid-cols-3">
-        <MetricCard label="Visible events" value={total} hint="Recent operational moments across the system." accent="cyan" />
+            <MetricCard label="Visible events" value={total} hint="Recent operational moments across the system." accent="cyan" />
         <MetricCard label="Errors" value={errorCount} hint="Exceptions surfaced in the current feed." accent={errorCount > 0 ? 'rose' : 'emerald'} />
-        <MetricCard label="Feed cost" value={formatCost(totalCost)} hint={`${approvalCount} approval events in scope`} accent="amber" />
+        <MetricCard label="Feed cost" value={formatCost(totalCost)} hint={`${approvalCount} approvals, ${workerActionCount} worker actions`} accent="amber" />
       </div>
 
       <div className="mt-4 grid gap-4 lg:grid-cols-[0.82fr_1.18fr]">
@@ -202,10 +227,11 @@ export default function RunsPage() {
             />
           ) : (
             <div ref={feedRef} className="space-y-3 max-h-[calc(100vh-300px)] overflow-y-auto pr-1">
-              {events.map((event) => {
-                const style = EVENT_TYPE_STYLES[event.eventType] ?? { label: 'Event', tone: 'neutral' as const }
-                const detail = parseDetail(event.detailJson)
-                return (
+                {events.map((event) => {
+                  const style = EVENT_TYPE_STYLES[event.eventType] ?? { label: 'Event', tone: 'neutral' as const }
+                  const detail = parseDetail(event.detailJson)
+                  const href = getEventHref(event)
+                  return (
                   <div
                     key={event.id}
                     className="rounded-[1.35rem] border border-white/10 bg-zinc-950/45 px-4 py-4 transition-colors hover:border-white/20"
@@ -247,6 +273,11 @@ export default function RunsPage() {
                           {event.conversationId ? <span>Conversation {event.conversationId.slice(0, 8)}</span> : null}
                           {event.jobId ? <span>Job {event.jobId}</span> : null}
                           {event.costUsd > 0 ? <span className="text-amber-300">{formatCost(event.costUsd)}</span> : null}
+                          {href ? (
+                            <Link href={href} className="text-cyan-300 transition-colors hover:text-cyan-200">
+                              Open related surface
+                            </Link>
+                          ) : null}
                         </div>
                       </div>
                     </div>

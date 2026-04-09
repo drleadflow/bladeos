@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import ApprovalsInbox from '@/components/approvals/inbox'
 import {
@@ -60,6 +60,9 @@ interface CostSummary {
 
 interface TodayData {
   alerts: MonitorAlert[]
+  criticalAlertCount: number
+  warningAlertCount: number
+  topAlert: MonitorAlert | null
   pendingApprovals: number
   recentActivity: ActivityEvent[]
   todayCost: CostSummary
@@ -118,6 +121,23 @@ function getSeverityTone(severity: string): 'rose' | 'amber' | 'blue' {
   return 'blue'
 }
 
+function getAlertAction(severity: string): string {
+  if (severity === 'critical' || severity === 'error') return 'Escalate now and assign an owner.'
+  if (severity === 'warning' || severity === 'high') return 'Review before the next execution cycle.'
+  return 'Watch for drift and keep the board clear.'
+}
+
+function getActivityImpact(eventType: string): string {
+  if (eventType === 'tool_call') return 'Blade executed a tool and moved work forward.'
+  if (eventType === 'job_start') return 'A new implementation job entered the pipeline.'
+  if (eventType === 'job_complete') return 'A job finished and likely produced a usable output.'
+  if (eventType === 'job_fail') return 'A job failed and may need human follow-up.'
+  if (eventType === 'approval') return 'A human decision unblocked a downstream action.'
+  if (eventType === 'error') return 'Something needs attention before it compounds.'
+  if (eventType === 'cost') return 'Spend changed and should be checked against budget.'
+  return 'A business event changed the operating picture.'
+}
+
 export default function TodayPage() {
   const [data, setData] = useState<TodayData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -142,6 +162,90 @@ export default function TodayPage() {
     return () => clearInterval(interval)
   }, [fetchData])
 
+  const leadAlert = data?.alerts[0] ?? null
+  const activityStats = useMemo(() => {
+    if (!data) {
+      return {
+        toolCalls: 0,
+        jobEvents: 0,
+        approvals: 0,
+        errors: 0,
+        conversations: 0,
+      }
+    }
+
+    return data.recentActivity.reduce(
+      (stats, event) => {
+        if (event.eventType === 'tool_call') stats.toolCalls += 1
+        if (event.eventType.startsWith('job_')) stats.jobEvents += 1
+        if (event.eventType === 'approval') stats.approvals += 1
+        if (event.eventType === 'error') stats.errors += 1
+        if (event.eventType === 'conversation') stats.conversations += 1
+        return stats
+      },
+      {
+        toolCalls: 0,
+        jobEvents: 0,
+        approvals: 0,
+        errors: 0,
+        conversations: 0,
+      }
+    )
+  }, [data])
+
+  const priorityQueue = useMemo(() => {
+    if (!data) return []
+
+    const items: Array<{
+      rank: string
+      title: string
+      detail: string
+      tone: 'blue' | 'cyan' | 'emerald' | 'rose' | 'amber' | 'neutral'
+    }> = []
+
+    if (leadAlert) {
+      items.push({
+        rank: 'Priority 1',
+        title: leadAlert.monitorName,
+        detail: `${leadAlert.message} ${getAlertAction(leadAlert.severity)}`,
+        tone: getSeverityTone(leadAlert.severity),
+      })
+    }
+
+    if (data.pendingApprovals > 0) {
+      items.push({
+        rank: items.length === 0 ? 'Priority 1' : 'Priority 2',
+        title: `${data.pendingApprovals} approvals waiting`,
+        detail:
+          data.pendingApprovals === 1
+            ? 'One decision is blocking execution. Clear it to let Blade continue.'
+            : 'Multiple human decisions are blocking downstream work. Clear the queue to unblock the workforce.',
+        tone: 'amber',
+      })
+    }
+
+    const topActivity = data.recentActivity[0]
+    if (topActivity) {
+      items.push({
+        rank: items.length === 0 ? 'Priority 1' : items.length === 1 ? 'Priority 2' : 'Priority 3',
+        title: topActivity.summary,
+        detail: getActivityImpact(topActivity.eventType),
+        tone: topActivity.eventType === 'error' ? 'rose' : topActivity.eventType === 'approval' ? 'emerald' : 'cyan',
+      })
+    }
+
+    if (items.length === 0) {
+      items.push({
+        rank: 'Priority',
+        title: 'Board clear',
+        detail: 'No immediate blockers. Use the quiet board to pursue the highest-leverage work.',
+        tone: 'emerald',
+      })
+    }
+
+    return items.slice(0, 3)
+  }, [data, leadAlert])
+
   if (loading) {
     return (
       <div className="grid min-h-screen place-items-center">
@@ -161,8 +265,6 @@ export default function TodayPage() {
     )
   }
 
-  const leadAlert = data.alerts[0]
-
   return (
     <PageShell
       eyebrow="Today"
@@ -172,6 +274,7 @@ export default function TodayPage() {
         <>
           <ActionButton href="/">Open Chat</ActionButton>
           <ActionButton href="/runs" tone="secondary">Live Runs</ActionButton>
+          <ActionButton href="/workers" tone="secondary">Workers</ActionButton>
         </>
       }
     >
@@ -179,17 +282,17 @@ export default function TodayPage() {
         <Panel glow="cyan" className="overflow-hidden">
           <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-cyan-400/40 to-transparent" />
           <PanelHeader
-            eyebrow="Attention Center"
-            title={leadAlert ? leadAlert.monitorName : 'All systems stable'}
+            eyebrow="Executive Brief"
+            title={leadAlert ? `Priority 1: ${leadAlert.monitorName}` : 'Board is clear'}
             description={
               leadAlert
-                ? leadAlert.message
+                ? `${leadAlert.message} ${getAlertAction(leadAlert.severity)}`
                 : 'No active alerts right now. Blade is monitoring the business and keeping the board clear.'
             }
             aside={<Badge tone={leadAlert ? getSeverityTone(leadAlert.severity) : 'emerald'}>{leadAlert ? leadAlert.severity : 'stable'}</Badge>}
           />
 
-          <div className="grid gap-4 md:grid-cols-3">
+          <div className="grid gap-4 md:grid-cols-4">
             <MetricCard
               label="Events Today"
               value={data.todayEventCount}
@@ -208,14 +311,46 @@ export default function TodayPage() {
               hint={`${data.todayCost.tokenCount.input + data.todayCost.tokenCount.output} total tokens`}
               accent="blue"
             />
+            <MetricCard
+              label="Active Agents"
+              value={data.activeAgents.length}
+              hint="The current workforce on deck."
+              accent="emerald"
+            />
+          </div>
+
+          <div className="mt-4 rounded-[1.5rem] border border-white/10 bg-black/20 p-4">
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+              <Badge tone={leadAlert ? getSeverityTone(leadAlert.severity) : 'emerald'}>
+                {leadAlert ? 'Priority queue open' : 'No priority queue'}
+              </Badge>
+              <Badge tone={data.pendingApprovals > 0 ? 'amber' : 'emerald'}>
+                {data.pendingApprovals} approvals
+              </Badge>
+              <Badge tone={activityStats.errors > 0 ? 'rose' : 'cyan'}>
+                {activityStats.errors} errors
+              </Badge>
+            </div>
+            <div className="space-y-3">
+              {priorityQueue.map((item) => (
+                <div key={`${item.rank}-${item.title}`} className="rounded-[1.1rem] border border-white/10 bg-white/[0.03] px-4 py-3">
+                  <div className="mb-2 flex flex-wrap items-center gap-2">
+                    <Badge tone={item.tone}>{item.rank}</Badge>
+                    <span className="text-xs uppercase tracking-[0.18em] text-zinc-500">Blade priority</span>
+                  </div>
+                  <p className="text-sm font-medium text-zinc-100">{item.title}</p>
+                  <p className="mt-1 text-sm leading-6 text-zinc-400">{item.detail}</p>
+                </div>
+              ))}
+            </div>
           </div>
         </Panel>
 
         <Panel glow="emerald">
           <PanelHeader
-            eyebrow="System Status"
+            eyebrow="Operating Posture"
             title="Live posture"
-            description="A quick pulse check across the workforce."
+            description="A quick pulse check across the workforce and decision queue."
           />
           <div className="space-y-4">
             <div className="flex items-center justify-between rounded-[1.3rem] border border-white/10 bg-zinc-950/50 px-4 py-3">
@@ -231,6 +366,13 @@ export default function TodayPage() {
                 <p className="mt-1 text-2xl font-semibold text-zinc-100">{data.alerts.length}</p>
               </div>
               <StatusDot tone={data.alerts.length > 0 ? 'amber' : 'emerald'} />
+            </div>
+            <div className="flex items-center justify-between rounded-[1.3rem] border border-white/10 bg-zinc-950/50 px-4 py-3">
+              <div>
+                <p className="text-xs uppercase tracking-[0.18em] text-zinc-500">Pending approvals</p>
+                <p className="mt-1 text-2xl font-semibold text-zinc-100">{data.pendingApprovals}</p>
+              </div>
+              <StatusDot tone={data.pendingApprovals > 0 ? 'amber' : 'emerald'} />
             </div>
             <div className="rounded-[1.3rem] border border-white/10 bg-gradient-to-br from-white/[0.05] to-cyan-400/[0.03] p-4">
               <p className="text-xs uppercase tracking-[0.18em] text-zinc-500">Recommended move</p>
@@ -249,7 +391,7 @@ export default function TodayPage() {
       <div className="mt-4 grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
         <Panel>
           <PanelHeader
-            eyebrow="Recent Activity"
+            eyebrow="Execution Feed"
             title="What changed most recently"
             description="A live operational feed of what Blade has been doing."
             aside={
@@ -258,6 +400,12 @@ export default function TodayPage() {
               </Link>
             }
           />
+          <div className="mb-4 flex flex-wrap gap-2">
+            <Badge tone="cyan">{data.todayEventCount} events</Badge>
+            <Badge tone="blue">{activityStats.toolCalls} tool calls</Badge>
+            <Badge tone="amber">{activityStats.jobEvents} job events</Badge>
+            <Badge tone={activityStats.approvals > 0 ? 'emerald' : 'neutral'}>{activityStats.approvals} approvals</Badge>
+          </div>
 
           {data.recentActivity.length === 0 ? (
             <EmptyState
@@ -281,7 +429,8 @@ export default function TodayPage() {
                             {event.actorId || 'Blade'}
                           </span>
                         </div>
-                        <p className="text-sm leading-6 text-zinc-200">{event.summary}</p>
+                        <p className="text-sm leading-6 text-zinc-100">{event.summary}</p>
+                        <p className="mt-2 text-sm leading-6 text-zinc-500">{getActivityImpact(event.eventType)}</p>
                         {event.jobId ? (
                           <p className="mt-2 text-xs text-zinc-500">Job {event.jobId}</p>
                         ) : null}
@@ -307,10 +456,17 @@ export default function TodayPage() {
               title={data.alerts.length > 0 ? 'Watch items' : 'System clear'}
               description={
                 data.alerts.length > 0
-                  ? 'Blade has surfaced issues that may need intervention.'
+                  ? `${data.criticalAlertCount} critical, ${data.warningAlertCount} elevated. Blade has surfaced issues that may need intervention.`
                   : 'No active alerts. Monitoring is calm right now.'
               }
             />
+            {data.alerts.length > 0 ? (
+              <div className="mb-4 flex flex-wrap gap-2">
+                <Badge tone="rose">{data.criticalAlertCount} critical</Badge>
+                <Badge tone="amber">{data.warningAlertCount} elevated</Badge>
+                <Badge tone="blue">{data.alerts.length} open</Badge>
+              </div>
+            ) : null}
             {data.alerts.length === 0 ? (
               <EmptyState
                 title="No active alerts"
@@ -327,6 +483,7 @@ export default function TodayPage() {
                           <span className="text-xs uppercase tracking-[0.18em] text-zinc-500">{alert.monitorName}</span>
                         </div>
                         <p className="text-sm leading-6 text-zinc-200">{alert.message}</p>
+                        <p className="mt-2 text-xs text-zinc-500">{getAlertAction(alert.severity)}</p>
                       </div>
                       <span className="text-xs text-zinc-500">{relativeTime(alert.createdAt)}</span>
                     </div>
@@ -362,6 +519,10 @@ export default function TodayPage() {
                         <StatusDot tone="emerald" />
                       </div>
                       <p className="truncate text-xs text-zinc-500">{agent.title}</p>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        <Badge tone="blue">{agent.pillar}</Badge>
+                        {agent.archetype ? <Badge tone="neutral">{agent.archetype}</Badge> : null}
+                      </div>
                     </div>
                   </Link>
                 ))}

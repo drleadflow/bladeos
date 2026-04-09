@@ -50,6 +50,16 @@ export default function ApprovalsInbox() {
     return () => clearInterval(interval)
   }, [fetchApprovals])
 
+  const urgentCount = approvals.filter((approval) => ['urgent', 'high'].includes(approval.priority)).length
+  const toolBoundCount = approvals.filter((approval) => Boolean(approval.toolName)).length
+  const oldestApproval = approvals.length > 0
+    ? approvals.reduce((oldest, approval) => {
+        return new Date(approval.createdAt).getTime() < new Date(oldest.createdAt).getTime()
+          ? approval
+          : oldest
+      }, approvals[0])
+    : null
+
   const handleDecision = async (id: string, decision: 'approved' | 'rejected') => {
     setDeciding(id)
     try {
@@ -85,6 +95,11 @@ export default function ApprovalsInbox() {
           <StatusDot tone="amber" />
           {pendingCount} waiting
         </div>
+        <div className="flex flex-wrap gap-2 text-xs uppercase tracking-[0.18em] text-zinc-500">
+          <span>{urgentCount} urgent</span>
+          <span>{toolBoundCount} tool gated</span>
+          {oldestApproval ? <span>oldest {formatTime(oldestApproval.createdAt)}</span> : null}
+        </div>
       </div>
 
       <div className="space-y-3">
@@ -115,6 +130,9 @@ export default function ApprovalsInbox() {
                     {approval.context}
                   </p>
                 ) : null}
+                <p className="mt-3 text-xs text-zinc-500">
+                  Blade is waiting for a human decision before it can continue this path.
+                </p>
               </div>
 
               <div className="flex shrink-0 gap-2">

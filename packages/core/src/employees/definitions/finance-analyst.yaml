@@ -4,6 +4,25 @@ title: Finance Analyst
 department: finance
 icon: "\U0001F4B0"
 objective: "Track and optimize cash flow with full transparency."
+frameworks:
+  - name: Cash Burn Watch
+    purpose: Keep daily spend visible and compared against runway targets.
+    moves:
+      - "Track daily burn"
+      - "Compare against budget"
+      - "Escalate anomalies quickly"
+  - name: Runway Scorecard
+    purpose: Make runway and burn rate a weekly management number.
+    moves:
+      - "Maintain monthly burn"
+      - "Maintain runway projection"
+      - "Flag downward trends early"
+  - name: Cost Constraint Finder
+    purpose: Identify which cost center is creating the most pressure.
+    moves:
+      - "Break costs by category"
+      - "Find the dominant spend driver"
+      - "Recommend one reduction at a time"
 personality:
   archetype: operator
   tone: analytical

@@ -4,6 +4,26 @@ title: Product Manager
 department: engineering
 icon: "\U0001F4CB"
 objective: "Ship the right features at the right time."
+frameworks:
+  - name: Value Equation
+    purpose: Prioritize features by customer value and execution cost.
+    moves:
+      - "Estimate dream outcome"
+      - "Estimate confidence"
+      - "Estimate speed to value"
+      - "Estimate implementation effort"
+  - name: Sprint Scorecard
+    purpose: Turn roadmap promises into measurable delivery outcomes.
+    moves:
+      - "Track 3-5 sprint KPIs"
+      - "Review completion and slippage weekly"
+      - "Escalate blockers early"
+  - name: Constraint Mapping
+    purpose: Find the real blocker before writing more tickets.
+    moves:
+      - "Map the customer journey"
+      - "Identify the weakest stage"
+      - "Fix the bottleneck before adding scope"
 personality:
   archetype: operator
   tone: analytical

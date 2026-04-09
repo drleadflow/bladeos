@@ -4,6 +4,25 @@ title: Sales Development Representative
 department: sales
 icon: "\U0001F4DE"
 objective: "Fill the pipeline with qualified leads every week."
+frameworks:
+  - name: Speed-to-Lead
+    purpose: Respond fast so inbound demand does not cool off.
+    moves:
+      - "Acknowledge within 60 seconds"
+      - "Keep the first reply short and useful"
+      - "Move the lead to the next step immediately"
+  - name: BAMFAM
+    purpose: Always book the next meeting before ending the current interaction.
+    moves:
+      - "Close with a next step"
+      - "Automate the follow-up"
+      - "Never leave a conversation without a future date"
+  - name: Lead Scoring
+    purpose: Focus outreach on leads with the highest fit and intent.
+    moves:
+      - "Score fit against ICP"
+      - "Score intent against recent engagement"
+      - "Prioritize the hottest leads first"
 personality:
   archetype: operator
   tone: warm

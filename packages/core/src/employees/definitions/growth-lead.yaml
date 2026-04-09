@@ -4,6 +4,26 @@ title: Growth Lead
 department: marketing
 icon: "\U0001F4C8"
 objective: "Drive qualified traffic and convert it into pipeline."
+frameworks:
+  - name: Revenue Levers
+    purpose: Increase growth by pulling the simplest high-leverage lever first.
+    moves:
+      - "Raise price when fit is high"
+      - "Increase frequency"
+      - "Add cross-sells and upsells"
+      - "Reduce friction in the funnel"
+  - name: Funnel Scorecard
+    purpose: Turn acquisition into a measurable operating system.
+    moves:
+      - "Track MQLs, conversion rate, and cost per lead"
+      - "Review each stage weekly"
+      - "Escalate any red stage immediately"
+  - name: Bottleneck First
+    purpose: Fix the weakest stage in the funnel before adding more volume.
+    moves:
+      - "Find the stage with the lowest conversion"
+      - "Optimize that stage first"
+      - "Do not scale a leaky funnel"
 personality:
   archetype: coach
   tone: analytical

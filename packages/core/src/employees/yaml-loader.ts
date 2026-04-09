@@ -22,6 +22,12 @@ export interface YamlRoutine {
   readonly timeout: number
 }
 
+export interface YamlFramework {
+  readonly name: string
+  readonly purpose: string
+  readonly moves: readonly string[]
+}
+
 export interface YamlHandoffRule {
   readonly condition: string
   readonly target: string
@@ -58,6 +64,7 @@ export interface YamlEmployeeDefinition {
   readonly memory_scope: string
   readonly kpis: readonly YamlKpi[]
   readonly routines: readonly YamlRoutine[]
+  readonly frameworks?: readonly YamlFramework[]
 }
 
 const definitionCache = new Map<string, YamlEmployeeDefinition>()
@@ -65,6 +72,25 @@ const definitionCache = new Map<string, YamlEmployeeDefinition>()
 function parseYamlFile(filePath: string): YamlEmployeeDefinition {
   const content = readFileSync(filePath, 'utf-8')
   return yaml.load(content) as YamlEmployeeDefinition
+}
+
+function formatFrameworkSummary(frameworks?: readonly YamlFramework[]): string {
+  if (!frameworks || frameworks.length === 0) return ''
+
+  return frameworks
+    .slice(0, 3)
+    .map((framework) => {
+      const moveList = framework.moves.slice(0, 2).join(', ')
+      return `${framework.name} (${framework.purpose}${moveList ? `; moves: ${moveList}` : ''})`
+    })
+    .join(' | ')
+}
+
+function buildObjective(def: YamlEmployeeDefinition): string {
+  const summary = formatFrameworkSummary(def.frameworks)
+  if (!summary) return def.objective
+
+  return `${def.objective} Operating playbooks: ${summary}.`
 }
 
 export function loadEmployeeDefinitions(dirPath: string): void {
@@ -87,7 +113,7 @@ export function loadEmployeeDefinitions(dirPath: string): void {
       active: false,
       archetype: def.personality.archetype,
       department: def.department,
-      objective: def.objective,
+      objective: buildObjective(def),
       managerId: def.manager ?? undefined,
       allowedToolsJson: [...def.allowed_tools],
       modelPreference: def.model_preference,
