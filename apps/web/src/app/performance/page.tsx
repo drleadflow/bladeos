@@ -41,6 +41,16 @@ interface PerformanceData {
     responses: number[]
     cta: number[]
   }
+  topIntros?: IntroPattern[]
+}
+
+interface IntroPattern {
+  intro: string
+  contactName: string
+  gotResponse: boolean
+  firstResponse: string
+  messageCount: number
+  conversationId: string
 }
 
 // ── Date range presets ───────────────────────────────────────
@@ -417,6 +427,91 @@ export default function PerformancePage() {
               iconBg="bg-cyan-500/20"
             />
           </div>
+
+          {/* Row 5 — Top Performing Intros */}
+          {data.topIntros && data.topIntros.length > 0 && (
+            <div className="mt-6">
+              <div className="mb-4">
+                <p className="text-[11px] font-medium uppercase tracking-[0.22em] text-zinc-500">
+                  Message Intelligence
+                </p>
+                <h2 className="mt-1 text-lg font-semibold text-zinc-100">
+                  Top Performing Intros
+                </h2>
+                <p className="mt-1 text-sm text-zinc-400">
+                  First messages that got a reply vs ones that went dead.
+                </p>
+              </div>
+
+              {/* Winning intros */}
+              <div className="mb-4 space-y-3">
+                {data.topIntros
+                  .filter((p) => p.gotResponse)
+                  .slice(0, 8)
+                  .map((pattern) => (
+                    <div
+                      key={pattern.conversationId}
+                      className="rounded-[1.5rem] border border-emerald-400/20 bg-emerald-400/[0.04] p-5"
+                    >
+                      <div className="mb-3 flex items-center gap-2">
+                        <span className="inline-flex items-center rounded-full border border-emerald-400/20 bg-emerald-400/10 px-2.5 py-1 text-[11px] font-medium uppercase tracking-[0.18em] text-emerald-300">
+                          Got Reply
+                        </span>
+                        <span className="text-xs text-zinc-500">
+                          {pattern.messageCount} messages in thread
+                        </span>
+                      </div>
+                      <p className="text-sm leading-6 text-zinc-200">
+                        {pattern.intro.length > 280
+                          ? pattern.intro.slice(0, 280) + '...'
+                          : pattern.intro}
+                      </p>
+                      {pattern.firstResponse && (
+                        <div className="mt-3 rounded-xl border border-white/5 bg-white/[0.03] px-4 py-3">
+                          <p className="text-xs uppercase tracking-[0.18em] text-zinc-500">
+                            Lead replied
+                          </p>
+                          <p className="mt-1 text-sm text-cyan-300/90">
+                            &ldquo;{pattern.firstResponse.length > 150
+                              ? pattern.firstResponse.slice(0, 150) + '...'
+                              : pattern.firstResponse}&rdquo;
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+              </div>
+
+              {/* Dead intros */}
+              {data.topIntros.filter((p) => !p.gotResponse).length > 0 && (
+                <div className="space-y-3">
+                  <p className="text-xs font-medium uppercase tracking-[0.18em] text-zinc-500">
+                    No Reply
+                  </p>
+                  {data.topIntros
+                    .filter((p) => !p.gotResponse)
+                    .slice(0, 4)
+                    .map((pattern) => (
+                      <div
+                        key={pattern.conversationId}
+                        className="rounded-[1.5rem] border border-white/5 bg-white/[0.02] p-5 opacity-60"
+                      >
+                        <div className="mb-2 flex items-center gap-2">
+                          <span className="inline-flex items-center rounded-full border border-zinc-700/50 bg-zinc-800/50 px-2.5 py-1 text-[11px] font-medium uppercase tracking-[0.18em] text-zinc-500">
+                            Dead
+                          </span>
+                        </div>
+                        <p className="text-sm leading-6 text-zinc-400">
+                          {pattern.intro.length > 200
+                            ? pattern.intro.slice(0, 200) + '...'
+                            : pattern.intro}
+                        </p>
+                      </div>
+                    ))}
+                </div>
+              )}
+            </div>
+          )}
         </>
       )}
 

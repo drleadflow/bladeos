@@ -31,6 +31,15 @@ interface ConversationSummary {
   campaign: string | null
 }
 
+interface IntroPattern {
+  intro: string
+  contactName: string
+  gotResponse: boolean
+  firstResponse: string
+  messageCount: number
+  conversationId: string
+}
+
 interface PerformanceData {
   leadActivations: number
   totalBookings: number
@@ -57,6 +66,7 @@ interface PerformanceData {
     cta: number[]
   }
   conversations: ConversationSummary[]
+  topIntros: IntroPattern[]
 }
 
 // Cache with TTL
@@ -267,6 +277,41 @@ export async function GET(request: NextRequest) {
       }
     })
 
+    // 7. Extract intro patterns — what first messages got replies vs didn't
+    const introPatterns: IntroPattern[] = []
+    for (const group of filteredGroups) {
+      const { messages: msgs, conversationId } = group
+      const firstOut = msgs.find((m) => m.direction === 'outbound' && m.body)
+      if (!firstOut) continue
+
+      // Skip system/notification messages
+      const body = firstOut.body
+      if (body.startsWith('Opportunity ') || body.startsWith('New Lead Signed Up')) continue
+
+      const firstOutTime = new Date(firstOut.dateAdded).getTime()
+      const inboundAfter = msgs.filter(
+        (m) => m.direction === 'inbound' && new Date(m.dateAdded).getTime() > firstOutTime
+      )
+      const firstReply = inboundAfter.find((m) => m.body) ?? inboundAfter[0]
+
+      introPatterns.push({
+        intro: body.slice(0, 400),
+        contactName: contactCache.get(group.contactId) ? '' : '',
+        gotResponse: inboundAfter.length > 0,
+        firstResponse: firstReply?.body?.slice(0, 200) ?? '',
+        messageCount: msgs.length,
+        conversationId,
+      })
+    }
+
+    // Sort: winning intros first (got response), then by message count (engagement depth)
+    const topIntros = introPatterns
+      .sort((a, b) => {
+        if (a.gotResponse !== b.gotResponse) return a.gotResponse ? -1 : 1
+        return b.messageCount - a.messageCount
+      })
+      .slice(0, 20)
+
     // 4. Aggregate metrics
     const total = summaries.length
     const withIntroSent = summaries.filter((c) => c.introSent)
@@ -321,6 +366,7 @@ export async function GET(request: NextRequest) {
       moneySaved,
       sparklines,
       conversations: summaries,
+      topIntros,
     }
 
     // Cache result
