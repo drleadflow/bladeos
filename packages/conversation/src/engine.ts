@@ -94,8 +94,9 @@ export function createConversationEngine(
         })
       } catch { /* DB may not be initialized */ }
 
-      // 2. Load history
-      const history = engine.getHistory(conversationId)
+      // 2. Load history (limit by channel — Telegram needs fewer messages to stay focused)
+      const historyLimit = request.channel === 'telegram' ? 20 : 50
+      const history = engine.getHistory(conversationId, historyLimit)
 
       // 3. Add user message to in-memory history for the model call.
       // DB persistence is DEFERRED until after a successful model response (step 10).

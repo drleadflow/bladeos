@@ -126,26 +126,39 @@ function telegramPrompt(): string {
   return personality ? `${personality}\n\n${SYSTEM_PROMPT}` : SYSTEM_PROMPT
 }
 
-function getOrCreateConversation(chatId: string): string {
+// Track when the last message was sent per chat for staleness detection
+const lastMessageTime = new Map<string, number>()
+const STALE_CONVERSATION_MS = 30 * 60 * 1000 // 30 minutes — start fresh after gap
+
+/** Detect if the user is starting a new topic (greeting or short message after a gap) */
+function isConversationStale(chatId: string): boolean {
+  const lastTime = lastMessageTime.get(chatId)
+  if (!lastTime) return true // First message ever — fresh start
+  return (Date.now() - lastTime) > STALE_CONVERSATION_MS
+}
+
+function getOrCreateConversation(chatId: string, userMessage?: string): string {
+  // Force new conversation if explicitly requested (/new command)
   if (forceNewConversation.has(chatId)) {
     forceNewConversation.delete(chatId)
-    const conversationId = conversationEngine.startConversation('telegram', `Telegram chat ${chatId}`)
-    conversationEngine.linkChannel(conversationId, chatId, 'telegram')
-    chatConversations.set(chatId, conversationId)
-    evictOldest(chatConversations, MAX_CACHED_CHATS)
-    return conversationId
+    return startFreshConversation(chatId)
+  }
+
+  // Auto-detect stale conversations — if 30+ minutes since last message, start fresh.
+  // This prevents the bot from loading old Slack/GitHub discussions and continuing them.
+  if (isConversationStale(chatId)) {
+    logger.info('Telegram', `Chat ${chatId}: conversation stale (30m+ gap), starting fresh`)
+    return startFreshConversation(chatId)
   }
 
   const cached = chatConversations.get(chatId)
   if (cached) return cached
 
-  const fromDb = conversationEngine.findByChannel(chatId, 'telegram')
-  if (fromDb) {
-    chatConversations.set(chatId, fromDb)
-    evictOldest(chatConversations, MAX_CACHED_CHATS)
-    return fromDb
-  }
+  // No cached conversation — start fresh (don't load ancient DB history)
+  return startFreshConversation(chatId)
+}
 
+function startFreshConversation(chatId: string): string {
   const conversationId = conversationEngine.startConversation('telegram', `Telegram chat ${chatId}`)
   conversationEngine.linkChannel(conversationId, chatId, 'telegram')
   chatConversations.set(chatId, conversationId)
@@ -244,7 +257,8 @@ async function runTelegramReplyInner(params: {
   sendVoiceReply?: boolean
 }): Promise<void> {
   const { bot, chatId, userText, sendVoiceReply = false } = params
-  const conversationId = getOrCreateConversation(chatId)
+  lastMessageTime.set(chatId, Date.now())
+  const conversationId = getOrCreateConversation(chatId, userText)
   const request = telegramAdapter.parseIncoming({
     chatId,
     text: userText,
