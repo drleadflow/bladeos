@@ -19,6 +19,8 @@ interface ConversationSummary {
   contactName: string
   introSent: boolean
   introResponse: boolean
+  repliedToIntro: boolean
+  repliedToFollowup: boolean
   ctaSent: boolean
   ctaResponse: boolean
   booked: boolean
@@ -48,6 +50,10 @@ interface PerformanceData {
   leadsToCtaCount: number
   introResponseRate: number
   introResponseCount: number
+  followupResponseRate: number
+  followupResponseCount: number
+  neverRepliedRate: number
+  neverRepliedCount: number
   responseToCTA: number
   responseToCtaCount: number
   responseToBooking: number
@@ -247,6 +253,9 @@ export async function GET(request: NextRequest) {
       )
 
       let introResponse = false
+      let repliedToIntro = false
+      let repliedToFollowup = false
+
       if (firstOutbound) {
         const firstOutboundTime = new Date(firstOutbound.dateAdded).getTime()
         introResponse = msgs.some(
@@ -254,6 +263,28 @@ export async function GET(request: NextRequest) {
             m.direction === 'inbound' &&
             new Date(m.dateAdded).getTime() > firstOutboundTime
         )
+
+        // Find second outbound (first follow-up) to distinguish intro vs followup response
+        const secondOutbound = msgs.find(
+          (m) =>
+            m.direction === 'outbound' &&
+            m.body &&
+            new Date(m.dateAdded).getTime() > firstOutboundTime
+        )
+        const secondOutTime = secondOutbound
+          ? new Date(secondOutbound.dateAdded).getTime()
+          : Infinity
+
+        // Did they reply BEFORE the follow-up was sent?
+        repliedToIntro = msgs.some(
+          (m) =>
+            m.direction === 'inbound' &&
+            new Date(m.dateAdded).getTime() > firstOutboundTime &&
+            new Date(m.dateAdded).getTime() < secondOutTime
+        )
+
+        // Did they reply to a later message but NOT the intro?
+        repliedToFollowup = !repliedToIntro && introResponse
       }
 
       return {
@@ -262,6 +293,8 @@ export async function GET(request: NextRequest) {
         contactName: '',
         introSent,
         introResponse,
+        repliedToIntro,
+        repliedToFollowup,
         ctaSent: classification.ctaSent,
         ctaResponse: classification.ctaResponse,
         booked: classification.bookingDiscussed,
@@ -314,6 +347,9 @@ export async function GET(request: NextRequest) {
     const total = summaries.length
     const withIntroSent = summaries.filter((c) => c.introSent)
     const withIntroResponse = summaries.filter((c) => c.introSent && c.introResponse)
+    const withRepliedToIntro = summaries.filter((c) => c.repliedToIntro)
+    const withRepliedToFollowup = summaries.filter((c) => c.repliedToFollowup)
+    const withNeverReplied = summaries.filter((c) => !c.introResponse && !c.disqualified)
     const withCta = summaries.filter((c) => c.ctaSent)
     const withCtaResponse = summaries.filter((c) => c.ctaSent && c.ctaResponse)
     const withBooking = summaries.filter((c) => c.booked)
@@ -348,8 +384,12 @@ export async function GET(request: NextRequest) {
       leadToBooking: pct(withBooking.length, total),
       leadsToCTA: pct(withCta.length, total),
       leadsToCtaCount: withCta.length,
-      introResponseRate: pct(withIntroResponse.length, withIntroSent.length),
-      introResponseCount: withIntroResponse.length,
+      introResponseRate: pct(withRepliedToIntro.length, total),
+      introResponseCount: withRepliedToIntro.length,
+      followupResponseRate: pct(withRepliedToFollowup.length, total),
+      followupResponseCount: withRepliedToFollowup.length,
+      neverRepliedRate: pct(withNeverReplied.length, total),
+      neverRepliedCount: withNeverReplied.length,
       responseToCTA: pct(withCtaResponse.length, withCta.length),
       responseToCtaCount: withCtaResponse.length,
       responseToBooking: pct(withBooking.length, withIntroResponse.length),

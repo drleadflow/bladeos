@@ -24,6 +24,10 @@ interface PerformanceData {
   leadsToCtaCount: number
   introResponseRate: number
   introResponseCount: number
+  followupResponseRate: number
+  followupResponseCount: number
+  neverRepliedRate: number
+  neverRepliedCount: number
   responseToCTA: number
   responseToCtaCount: number
   responseToBooking: number
@@ -356,16 +360,32 @@ export default function PerformancePage() {
             />
           </div>
 
-          {/* Row 2 — Response metrics */}
+          {/* Row 2 — Response breakdown */}
           <div className="mb-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <StatCard
-              label="Intro Response Rate"
+              label="Replied to Intro"
               value={`${data.introResponseRate}%`}
-              sub={data.introResponseCount.toString()}
+              sub={`${data.introResponseCount} replied before follow-up`}
               sparkData={data.sparklines.responses}
-              sparkColor="amber"
+              sparkColor="emerald"
               sparkGradient
             />
+            <StatCard
+              label="Replied to Follow-up"
+              value={`${data.followupResponseRate}%`}
+              sub={`${data.followupResponseCount} replied to later messages`}
+              sparkColor="amber"
+            />
+            <StatCard
+              label="Never Replied"
+              value={`${data.neverRepliedRate}%`}
+              sub={`${data.neverRepliedCount} total dead leads`}
+              sparkColor="rose"
+            />
+          </div>
+
+          {/* Row 3 — CTA metrics */}
+          <div className="mb-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <StatCard
               label="Response to CTA"
               value={`${data.responseToCTA}%`}
@@ -379,19 +399,19 @@ export default function PerformancePage() {
               value={`${data.responseToBooking}%`}
               sub={data.totalBookings.toString()}
             />
-          </div>
-
-          {/* Row 3 — Conversion tail */}
-          <div className="mb-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            <StatCard
-              label="CTA to Booking"
-              value={`${data.ctaToBooking}%`}
-              sub={data.totalBookings.toString()}
-            />
             <StatCard
               label="Response no CTA"
               value={`${data.responseNoCTA}%`}
               sub={data.responseNoCtaCount.toString()}
+            />
+          </div>
+
+          {/* Row 4 — Conversion tail */}
+          <div className="mb-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-2">
+            <StatCard
+              label="CTA to Booking"
+              value={`${data.ctaToBooking}%`}
+              sub={data.totalBookings.toString()}
             />
             <StatCard
               label="Leads DQ%"
