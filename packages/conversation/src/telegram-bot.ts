@@ -1,5 +1,5 @@
 import TelegramBot from 'node-telegram-bot-api'
-import { initializeDb, memories, costEntries, activityEvents } from '@blade/db'
+import { initializeDb, memories, costEntries, activityEvents, workspaces as wsRepo, clientAccounts } from '@blade/db'
 import {
   createExecutionAPI,
   loadPersonality,
@@ -457,9 +457,14 @@ export function startTelegramBot(token: string, allowedChatIds?: string[]): Tele
         '⚔️ Blade Commands\n\n' +
           '/start — Welcome message\n' +
           '/help — This help text\n' +
+          '/status — Check all integrations (GitHub, GHL, workspaces, clients)\n' +
           '/memory — View recent memories\n' +
           '/costs — View cost summary\n' +
           '/new — Start a new conversation\n\n' +
+          'Development:\n' +
+          '"Open drleadflow/repo-name" — Clone and work on a project\n' +
+          '"Run npm install" — Execute commands in active project\n' +
+          '"Push and PR: description" — Ship your changes\n\n' +
           'Or just send me a text message to chat!'
       )
     } catch (err) {
@@ -509,6 +514,96 @@ export function startTelegramBot(token: string, allowedChatIds?: string[]): Tele
     } catch (err) {
       logger.error('Telegram', `/costs error: ${err instanceof Error ? err.message : String(err)}`)
       await bot.sendMessage(msg.chat.id, 'Failed to retrieve cost summary.').catch(() => {})
+    }
+  })
+
+  bot.onText(/\/status/, async (msg) => {
+    if (!isAllowed(msg.chat.id)) return
+
+    try {
+      const lines: string[] = ['Blade Status Report', '']
+
+      // AI Providers
+      lines.push('AI Providers:')
+      if (process.env.ANTHROPIC_API_KEY) lines.push('  Anthropic: connected')
+      if (process.env.OPENROUTER_API_KEY) lines.push('  OpenRouter: connected')
+      if (process.env.OPENAI_API_KEY) lines.push('  OpenAI: connected')
+      if (!process.env.ANTHROPIC_API_KEY && !process.env.OPENROUTER_API_KEY && !process.env.OPENAI_API_KEY) {
+        lines.push('  None configured!')
+      }
+
+      // GitHub
+      lines.push('')
+      lines.push('GitHub:')
+      if (process.env.GITHUB_TOKEN) {
+        lines.push('  Token: configured')
+        lines.push('  Can: clone repos, read issues, create PRs, push code')
+      } else {
+        lines.push('  Not configured')
+      }
+
+      // GHL / MCP
+      lines.push('')
+      lines.push('GoHighLevel:')
+      if (process.env.GHL_MCP_USER_KEY) {
+        lines.push('  MCP Server: connected (dlf-agency.skool-203.workers.dev)')
+        lines.push('  User Key: configured')
+        lines.push('  Can: list sub-accounts, export messages, search conversations')
+      } else {
+        lines.push('  MCP: not configured (GHL_MCP_USER_KEY missing)')
+      }
+      if (process.env.GHL_API_KEY) lines.push(`  Direct API: configured (location: ${process.env.GHL_LOCATION_ID ?? 'unknown'})`)
+
+      // Slack
+      lines.push('')
+      lines.push('Slack:')
+      lines.push(process.env.SLACK_BOT_TOKEN ? '  Bot: connected' : '  Not configured')
+
+      // Workspaces
+      lines.push('')
+      lines.push('Workspaces:')
+      try {
+        const all = wsRepo.list()
+        if (all.length > 0) {
+          lines.push(`  ${all.length} project(s) open:`)
+          for (const ws of all.slice(0, 5)) {
+            lines.push(`    - ${ws.name} (${ws.status}) — ${ws.repoUrl}`)
+          }
+        } else {
+          lines.push('  No projects open. Say "open <repo>" to start.')
+        }
+      } catch {
+        lines.push('  Workspace system ready')
+      }
+
+      // Clients (CSM)
+      lines.push('')
+      lines.push('CSM Clients:')
+      try {
+        const clients = clientAccounts.list({ status: 'active' })
+        if (clients.length > 0) {
+          lines.push(`  ${clients.length} active client(s):`)
+          for (const c of clients.slice(0, 5)) {
+            lines.push(`    - ${c.name} (${c.healthStatus}, ${c.healthScore}/100)`)
+          }
+        } else {
+          lines.push('  No clients configured yet')
+        }
+      } catch {
+        lines.push('  Client system ready')
+      }
+
+      // Tools
+      lines.push('')
+      lines.push('Available tools: open_project, run_in_project, read/write files, push_and_pr, list_clients, check_client_health, meta_ads, github, slack, memory, web search')
+
+      lines.push('')
+      lines.push('Send "open drleadflow/Ceolandingpages" to start coding.')
+
+      await sendWithRetry(bot, msg.chat.id, lines.join('\n'))
+    } catch (err) {
+      logger.error('Telegram', `/status error: ${err instanceof Error ? err.message : String(err)}`)
+      await bot.sendMessage(msg.chat.id, 'Failed to get status.').catch(() => {})
     }
   })
 
