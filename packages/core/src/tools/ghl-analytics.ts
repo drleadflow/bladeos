@@ -44,8 +44,13 @@ registerTool(
       const byTemplate = leadEngagement.byIntroTemplate({ accountId, days })
 
       if (overall.totalLeads === 0) {
-        return ok('ghl_intro_response_rate', input, { noData: true },
-          'No lead data found. Make sure GHL webhooks are sending to /api/webhooks/ghl')
+        // Local DB empty — trigger a sync and tell user to retry
+        try {
+          const port = process.env.PORT ?? '3000'
+          fetch(`http://localhost:${port}/api/leads/sync?all=true&days=30`).catch(() => {})
+        } catch { /* ignore */ }
+        return ok('ghl_intro_response_rate', input, { noData: true, syncTriggered: true },
+          'No lead data in local database yet. I just triggered a sync from GHL — this pulls all messages via MCP and stores them locally. Try again in 2-3 minutes. Alternatively, use the recall_memory or web_search tools to check if there are cached reports.')
       }
 
       const lines = [
