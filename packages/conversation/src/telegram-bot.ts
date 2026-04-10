@@ -23,11 +23,17 @@ const pendingMessages = new Map<string, { text: string; resolve: () => void }>()
 
 const SYSTEM_PROMPT = `You are Blade, an AI super agent built by Blade Labs. You are helpful, direct, and capable.
 
+CRITICAL RULES:
+1. ONLY respond to what the user just said. Do NOT bring up topics from memory unless the user asks about them.
+2. If memories are provided below, use them ONLY if they are directly relevant to the user's current message. Ignore unrelated memories completely.
+3. NEVER reference tasks, issues, or projects the user did not mention in this conversation.
+4. If you are unsure what the user is asking, ask for clarification instead of guessing.
+
 You have access to tools for memory management, file operations, and command execution.
 
 Key behaviors:
 - When the user tells you a preference or important fact, save it to memory using save_memory.
-- When a topic comes up that you might have prior context on, use recall_memory to check.
+- When a topic comes up that you might have prior context on, use recall_memory to check. But ONLY if the user brought it up.
 - Be concise but thorough. Show your work when using tools.
 - Track what works and what doesn't — you get better over time.
 
@@ -44,12 +50,24 @@ const forceNewConversation = new Set<string>()
 const chatConversations = new Map<string, string>()
 
 const executionApi = createExecutionAPI()
+const MEMORY_RELEVANCE_THRESHOLD = 0.45
+
 const conversationEngine = createConversationEngine(executionApi, {
   retrieveMemories: async (query: string) => {
-    const ranked = retrieveRelevant(query, 8)
+    // Only retrieve memories if the query is specific enough (>10 chars, not a greeting)
+    const trimmed = query.trim().toLowerCase()
+    if (trimmed.length < 10 || /^(hi|hey|hello|yo|sup|what's up|how are you)/.test(trimmed)) {
+      return ''
+    }
+
+    const ranked = retrieveRelevant(query, 5)
     if (ranked.length === 0) return ''
 
-    return ranked
+    // Filter to only high-relevance memories to prevent context contamination
+    const relevant = ranked.filter(m => m.relevanceScore >= MEMORY_RELEVANCE_THRESHOLD)
+    if (relevant.length === 0) return ''
+
+    return relevant
       .map((memory, index) => {
         const tags = memory.tags.length > 0 ? ` [tags: ${memory.tags.join(', ')}]` : ''
         return `${index + 1}. (${memory.type}) ${memory.content}${tags}`

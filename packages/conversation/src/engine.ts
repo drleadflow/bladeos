@@ -141,7 +141,7 @@ export function createConversationEngine(
         systemPrompt = buildSystemPrompt({ request, employeePrompt })
       }
       if (memoryContext) {
-        systemPrompt += `\n\n## Relevant Memory\n${memoryContext}`
+        systemPrompt += `\n\n## Background Memory (use ONLY if directly relevant to the user's current message — ignore otherwise)\n${memoryContext}`
       }
 
       // 5. Resolve model config
