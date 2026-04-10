@@ -16,6 +16,7 @@ export { runCodingPipeline } from './pipeline/index.js'
 
 // Learning & Memory
 export { extractLearnings, extractJobLearnings, buildMemoryAugmentedPrompt } from './learning/index.js'
+export { processPRFeedback, checkPendingPRFeedback } from './learning/pr-feedback.js'
 export { retrieveRelevant } from './memory/retriever.js'
 export type { RankedMemory } from './memory/retriever.js'
 
@@ -104,6 +105,9 @@ export { setupBuiltinMonitors } from './monitors/index.js'
 export { startMonitorScheduler, runMonitorsNow, stopMonitorScheduler } from './monitors/index.js'
 export type { MonitorDefinition, MonitorCheckResult } from './monitors/index.js'
 export { measureAllKpis, registerMeasurement } from './monitors/index.js'
+
+// Routines
+export { RoutineScheduler } from './routines/index.js'
 
 // Execution API (v2 boundary)
 export { createExecutionAPI } from './execution-api.js'

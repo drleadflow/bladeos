@@ -341,3 +341,138 @@ export async function getConversationMessages(
 }
 
 export { callTool }
+
+// ── Direct GHL Internal API (Firebase auth fallback) ─────────
+// Used for accounts where MCP OAuth token is expired but we have
+// Firebase agency access (e.g., MDW Aesthetics)
+
+const GHL_INTERNAL_API = 'https://services.leadconnectorhq.com'
+const FIREBASE_API_KEY = 'AIzaSyB_w3vXmsI7WeQtrIOkjR6xTRVN5uOieiE'
+
+let cachedFirebaseToken: string | null = null
+let firebaseTokenExpiry = 0
+
+async function getFirebaseToken(): Promise<string | null> {
+  if (cachedFirebaseToken && Date.now() < firebaseTokenExpiry) {
+    return cachedFirebaseToken
+  }
+
+  const refreshToken = process.env.GHL_FIREBASE_REFRESH_TOKEN
+  if (!refreshToken) return null
+
+  try {
+    const res = await fetch(
+      `https://securetoken.googleapis.com/v1/token?key=${FIREBASE_API_KEY}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `grant_type=refresh_token&refresh_token=${refreshToken}`,
+      }
+    )
+    if (!res.ok) return null
+
+    const data = (await res.json()) as { id_token?: string; expires_in?: string }
+    if (!data.id_token) return null
+
+    cachedFirebaseToken = data.id_token
+    firebaseTokenExpiry = Date.now() + (parseInt(data.expires_in ?? '3600', 10) - 60) * 1000
+    return cachedFirebaseToken
+  } catch {
+    return null
+  }
+}
+
+async function ghlInternalFetch(path: string): Promise<unknown> {
+  const token = await getFirebaseToken()
+  if (!token) throw new Error('No Firebase token available')
+
+  const res = await fetch(`${GHL_INTERNAL_API}${path}`, {
+    headers: {
+      'token-id': token,
+      'channel': 'APP',
+      'source': 'WEB_USER',
+      'version': '2021-07-28',
+    },
+  })
+
+  if (!res.ok) {
+    throw new Error(`GHL internal API ${res.status}: ${res.statusText}`)
+  }
+
+  return res.json()
+}
+
+/**
+ * Get all messages for a Firebase-authed account by iterating conversations.
+ * Used as fallback when MCP OAuth token is expired.
+ */
+export async function getAllMessagesViaFirebase(
+  locationId: string,
+  startDate?: string,
+  maxConversations = 50
+): Promise<GHLMessage[]> {
+  const token = await getFirebaseToken()
+  if (!token) throw new Error('No Firebase token — set GHL_FIREBASE_REFRESH_TOKEN in .env')
+
+  // 1. Get conversations
+  const convData = (await ghlInternalFetch(
+    `/conversations/search?locationId=${locationId}&limit=${maxConversations}`
+  )) as { conversations?: Array<{ id: string; contactId: string; contactName: string; lastMessageDate: number }> }
+
+  const conversations = convData?.conversations ?? []
+  if (conversations.length === 0) return []
+
+  // Filter by date if provided
+  const startTs = startDate ? new Date(startDate).getTime() : 0
+  const filtered = startTs > 0
+    ? conversations.filter((c) => c.lastMessageDate >= startTs)
+    : conversations
+
+  // 2. Get messages for each conversation (batch of 10)
+  const allMessages: GHLMessage[] = []
+  const BATCH = 10
+
+  for (let i = 0; i < filtered.length; i += BATCH) {
+    const batch = filtered.slice(i, i + BATCH)
+    const results = await Promise.all(
+      batch.map(async (conv) => {
+        try {
+          const msgData = (await ghlInternalFetch(
+            `/conversations/${conv.id}/messages?limit=50`
+          )) as { messages?: { messages?: Array<Record<string, unknown>> } }
+
+          const msgs = msgData?.messages?.messages ?? []
+          return msgs.map((m) => ({
+            id: String(m.id ?? ''),
+            direction: String(m.direction ?? 'outbound') as 'inbound' | 'outbound',
+            status: String(m.status ?? ''),
+            type: Number(m.type ?? 0),
+            locationId,
+            body: String(m.body ?? ''),
+            contactId: String(m.contactId ?? conv.contactId),
+            conversationId: conv.id,
+            dateAdded: String(m.dateAdded ?? ''),
+            dateUpdated: String(m.dateUpdated ?? ''),
+            source: String(m.source ?? ''),
+            from: String(m.from ?? ''),
+            to: String(m.to ?? ''),
+            messageType: String(m.messageType ?? m.type ?? ''),
+            attachments: Array.isArray(m.attachments) ? m.attachments as string[] : [],
+            contentType: String(m.contentType ?? ''),
+          } satisfies GHLMessage))
+        } catch {
+          return []
+        }
+      })
+    )
+    allMessages.push(...results.flat())
+  }
+
+  // Filter by start date
+  if (startDate) {
+    const ts = new Date(startDate).getTime()
+    return allMessages.filter((m) => new Date(m.dateAdded).getTime() >= ts)
+  }
+
+  return allMessages
+}

@@ -58,6 +58,18 @@ interface CostSummary {
   tokenCount: { input: number; output: number }
 }
 
+interface EvalSummary {
+  totalJobs: number
+  passed: number
+  failed: number
+  partial: number
+  successRatePct: number
+  avgCostUsd: number
+  avgDurationSec: number
+  avgToolCalls: number
+  avgFixCycles: number
+}
+
 interface TodayData {
   alerts: MonitorAlert[]
   criticalAlertCount: number
@@ -68,6 +80,9 @@ interface TodayData {
   todayCost: CostSummary
   activeAgents: ActiveAgent[]
   todayEventCount: number
+  evalSummary?: EvalSummary
+  activeWorkerCount?: number
+  systemHealth?: number
 }
 
 const EVENT_TYPE_STYLES: Record<string, { icon: string; tone: 'blue' | 'cyan' | 'emerald' | 'rose' | 'amber' | 'neutral' }> = {
@@ -292,7 +307,19 @@ export default function TodayPage() {
             aside={<Badge tone={leadAlert ? getSeverityTone(leadAlert.severity) : 'emerald'}>{leadAlert ? leadAlert.severity : 'stable'}</Badge>}
           />
 
-          <div className="grid gap-4 md:grid-cols-4">
+          <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-6">
+            <MetricCard
+              label="System Health"
+              value={data.systemHealth != null ? `${data.systemHealth}%` : '--'}
+              hint="Composite score from alerts, eval rate, cost, and agents."
+              accent={data.systemHealth != null && data.systemHealth >= 70 ? 'emerald' : data.systemHealth != null && data.systemHealth >= 40 ? 'amber' : 'rose'}
+            />
+            <MetricCard
+              label="Success Rate"
+              value={data.evalSummary?.totalJobs ? `${data.evalSummary.successRatePct}%` : '--'}
+              hint={data.evalSummary?.totalJobs ? `${data.evalSummary.passed}/${data.evalSummary.totalJobs} jobs passed (30d)` : 'No eval data yet'}
+              accent={data.evalSummary && data.evalSummary.successRatePct >= 80 ? 'emerald' : data.evalSummary && data.evalSummary.successRatePct >= 50 ? 'amber' : 'cyan'}
+            />
             <MetricCard
               label="Events Today"
               value={data.todayEventCount}
@@ -314,7 +341,7 @@ export default function TodayPage() {
             <MetricCard
               label="Active Agents"
               value={data.activeAgents.length}
-              hint="The current workforce on deck."
+              hint={data.activeWorkerCount ? `${data.activeWorkerCount} worker(s) running` : 'The current workforce on deck.'}
               accent="emerald"
             />
           </div>
@@ -367,6 +394,25 @@ export default function TodayPage() {
               </div>
               <StatusDot tone={data.alerts.length > 0 ? 'amber' : 'emerald'} />
             </div>
+            {data.evalSummary && data.evalSummary.totalJobs > 0 && (
+              <div className="flex items-center justify-between rounded-[1.3rem] border border-white/10 bg-zinc-950/50 px-4 py-3">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.18em] text-zinc-500">Job success (30d)</p>
+                  <p className="mt-1 text-2xl font-semibold text-zinc-100">{data.evalSummary.successRatePct}%</p>
+                  <p className="text-xs text-zinc-500">{data.evalSummary.passed}/{data.evalSummary.totalJobs} passed, avg ${data.evalSummary.avgCostUsd.toFixed(4)}/job</p>
+                </div>
+                <StatusDot tone={data.evalSummary.successRatePct >= 80 ? 'emerald' : data.evalSummary.successRatePct >= 50 ? 'amber' : 'rose'} />
+              </div>
+            )}
+            {(data.activeWorkerCount ?? 0) > 0 && (
+              <div className="flex items-center justify-between rounded-[1.3rem] border border-white/10 bg-zinc-950/50 px-4 py-3">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.18em] text-zinc-500">Active workers</p>
+                  <p className="mt-1 text-2xl font-semibold text-zinc-100">{data.activeWorkerCount}</p>
+                </div>
+                <StatusDot tone="cyan" />
+              </div>
+            )}
             <div className="flex items-center justify-between rounded-[1.3rem] border border-white/10 bg-zinc-950/50 px-4 py-3">
               <div>
                 <p className="text-xs uppercase tracking-[0.18em] text-zinc-500">Pending approvals</p>

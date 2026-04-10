@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import {
   getAllMessages,
+  getAllMessagesViaFirebase, // eslint-disable-line @typescript-eslint/no-unused-vars -- used in catch fallback
   getContact,
   type GHLMessage,
 } from '@/lib/ghl-mcp-client'
@@ -148,23 +149,31 @@ export async function GET(request: NextRequest) {
   try {
     // 1. Fetch all messages for this account in the date range
     // Limit pages to keep response time under 30s
-    // 5 pages × 50 messages = 250 most recent messages
+    // Try MCP first, fall back to Firebase internal API
     let messages: GHLMessage[]
     try {
       messages = await getAllMessages(accountId, startDate, 5)
-    } catch (fetchError: unknown) {
-      const msg = fetchError instanceof Error ? fetchError.message : String(fetchError)
-      // Detect expired token errors
-      if (msg.includes('401') || msg.includes('Unauthorized') || msg.includes('Invalid JWT')) {
+    } catch (mcpError: unknown) {
+      const mcpMsg = mcpError instanceof Error ? mcpError.message : String(mcpError)
+      const isAuthError = mcpMsg.includes('401') || mcpMsg.includes('Unauthorized') || mcpMsg.includes('Invalid JWT')
+
+      if (isAuthError) {
+        // MCP token expired — try Firebase internal API fallback
+        try {
+          messages = await getAllMessagesViaFirebase(accountId, startDate)
+        } catch (fbError: unknown) {
+          const fbMsg = fbError instanceof Error ? fbError.message : String(fbError)
+          return NextResponse.json(
+            { success: false, error: 'token_expired', detail: `MCP token expired and Firebase fallback failed: ${fbMsg}` },
+            { status: 401 }
+          )
+        }
+      } else {
         return NextResponse.json(
-          { success: false, error: 'token_expired', detail: 'This account\'s API token has expired. The account owner needs to reinstall the integration or create a Private Integration Token.' },
-          { status: 401 }
+          { success: false, error: `Message fetch failed: ${mcpMsg}` },
+          { status: 500 }
         )
       }
-      return NextResponse.json(
-        { success: false, error: `Message fetch failed: ${msg}` },
-        { status: 500 }
-      )
     }
 
     if (!Array.isArray(messages)) {
