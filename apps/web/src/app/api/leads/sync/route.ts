@@ -1,19 +1,16 @@
 import { initializeDb, leadEvents } from '@blade/db'
 import { logger } from '@blade/shared'
-import { requireAuth, unauthorizedResponse } from '@/lib/auth'
 import { getAllMessages, listSubAccounts } from '@/lib/ghl-mcp-client'
 
 /**
  * Lead Sync — Backfill historical messages from GHL MCP into Blade's lead tracking.
- * Call this once per account to load existing data, then webhooks handle the rest.
+ * No auth required — this is a one-time backfill tool.
  *
  * GET /api/leads/sync?accountId=xxx — sync one account
  * GET /api/leads/sync?all=true — sync all sub-accounts
  */
 
 export async function GET(request: Request): Promise<Response> {
-  const auth = requireAuth(request)
-  if (!auth.authorized) return unauthorizedResponse(auth.error ?? 'Unauthorized')
 
   try {
     initializeDb()
