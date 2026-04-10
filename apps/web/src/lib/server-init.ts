@@ -45,4 +45,32 @@ export function ensureServerInit(): void {
   } catch (err) {
     console.error('[server-init] Routine scheduler failed:', err)
   }
+
+  // Scheduled lead sync — pull new GHL messages every hour via MCP
+  // This replaces the need for GHL webhooks (which can't be created via API)
+  const LEAD_SYNC_INTERVAL = 60 * 60 * 1000 // 1 hour
+  setInterval(async () => {
+    try {
+      const res = await fetch(`http://localhost:${process.env.PORT ?? 3000}/api/leads/sync?all=true&days=1`)
+      const json = await res.json()
+      if (json.success) {
+        console.log(`[lead-sync] ${json.summary}`)
+      }
+    } catch (err) {
+      console.error('[lead-sync] Hourly sync failed:', err)
+    }
+  }, LEAD_SYNC_INTERVAL)
+
+  // Run initial sync after 30s delay (let server fully boot first)
+  setTimeout(async () => {
+    try {
+      const res = await fetch(`http://localhost:${process.env.PORT ?? 3000}/api/leads/sync?all=true&days=7`)
+      const json = await res.json()
+      if (json.success) {
+        console.log(`[lead-sync] Initial sync: ${json.summary}`)
+      }
+    } catch (err) {
+      console.error('[lead-sync] Initial sync failed:', err)
+    }
+  }, 30_000)
 }
