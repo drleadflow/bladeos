@@ -345,7 +345,6 @@ export async function GET(request: NextRequest) {
 
     // 4. Aggregate metrics
     const total = summaries.length
-    const withIntroSent = summaries.filter((c) => c.introSent)
     const withIntroResponse = summaries.filter((c) => c.introSent && c.introResponse)
     const withRepliedToIntro = summaries.filter((c) => c.repliedToIntro)
     const withRepliedToFollowup = summaries.filter((c) => c.repliedToFollowup)
