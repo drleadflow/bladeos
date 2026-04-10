@@ -148,31 +148,23 @@ export async function GET(request: NextRequest) {
 
   try {
     // 1. Fetch all messages for this account in the date range
-    // Limit pages to keep response time under 30s
-    // Try MCP first, fall back to Firebase internal API
+    // Try MCP first, fall back to Firebase internal API if MCP fails or returns empty
     let messages: GHLMessage[]
+    let usedFirebase = false
     try {
       messages = await getAllMessages(accountId, startDate, 5)
     } catch (mcpError: unknown) {
-      const mcpMsg = mcpError instanceof Error ? mcpError.message : String(mcpError)
-      const isAuthError = mcpMsg.includes('401') || mcpMsg.includes('Unauthorized') || mcpMsg.includes('Invalid JWT')
+      // MCP failed — set empty to trigger Firebase fallback below
+      messages = []
+    }
 
-      if (isAuthError) {
-        // MCP token expired — try Firebase internal API fallback
-        try {
-          messages = await getAllMessagesViaFirebase(accountId, startDate)
-        } catch (fbError: unknown) {
-          const fbMsg = fbError instanceof Error ? fbError.message : String(fbError)
-          return NextResponse.json(
-            { success: false, error: 'token_expired', detail: `MCP token expired and Firebase fallback failed: ${fbMsg}` },
-            { status: 401 }
-          )
-        }
-      } else {
-        return NextResponse.json(
-          { success: false, error: `Message fetch failed: ${mcpMsg}` },
-          { status: 500 }
-        )
+    // If MCP returned nothing, try Firebase fallback
+    if (messages.length === 0) {
+      try {
+        messages = await getAllMessagesViaFirebase(accountId, startDate)
+        usedFirebase = true
+      } catch {
+        // Firebase also failed — return what we have (empty)
       }
     }
 
