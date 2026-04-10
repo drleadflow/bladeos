@@ -252,7 +252,7 @@ export async function callModel(
     return callClaudeCli(systemPrompt, messages, tools, maxTokens)
   }
 
-  if (config.provider === 'anthropic' || config.provider === 'openrouter') {
+  if (config.provider === 'anthropic') {
     const client = createAnthropicClient(config)
 
     logger.debug('ModelProvider', `Calling ${config.modelId} with ${messages.length} messages and ${tools.length} tools`)
@@ -268,7 +268,7 @@ export async function callModel(
     return fromAnthropicResponse(response)
   }
 
-  if (config.provider === 'openai') {
+  if (config.provider === 'openai' || config.provider === 'openrouter') {
     return callOpenAI(config, systemPrompt, messages, tools, maxTokens)
   }
 
@@ -286,12 +286,12 @@ export async function* streamModel(
   tools: ToolDefinition[],
   maxTokens?: number
 ): AsyncGenerator<{ type: 'text_delta'; text: string } | { type: 'content_block_stop'; block: ContentBlock } | { type: 'message_done'; response: ModelResponse }> {
-  if (config.provider === 'openai') {
+  if (config.provider === 'openai' || config.provider === 'openrouter') {
     yield* streamOpenAI(config, systemPrompt, messages, tools, maxTokens)
     return
   }
 
-  if (config.provider !== 'anthropic' && config.provider !== 'openrouter') {
+  if (config.provider !== 'anthropic') {
     throw new Error(`Streaming not supported for provider "${config.provider}"`)
   }
 
