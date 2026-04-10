@@ -1534,3 +1534,206 @@ export const jobEvals = {
     ).run(params.prMerged ? 1 : 0, params.prReviewComments ?? 0, params.prTimeToMergeMs ?? null, jobId)
   },
 }
+
+// ============================================================
+// CLIENT ACCOUNTS (CSM Agent)
+// ============================================================
+
+export const clientAccounts = {
+  create(params: {
+    name: string
+    slug: string
+    serviceType?: string
+    industry?: string
+    contactName?: string
+    contactEmail?: string
+    slackChannelId?: string
+    slackChannelName?: string
+    monthlyRetainerUsd?: number
+    platforms?: Record<string, unknown>
+    kpiTargets?: Array<{ metric: string; target: number; warning: number; critical: number; direction: string }>
+    notes?: string
+  }): { id: string } {
+    const id = uuid()
+    db().prepare(
+      `INSERT INTO client_accounts (id, name, slug, service_type, industry, contact_name, contact_email,
+       slack_channel_id, slack_channel_name, monthly_retainer_usd, platforms_json, kpi_targets_json, notes, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      id, params.name, params.slug, params.serviceType ?? 'ads', params.industry ?? null,
+      params.contactName ?? null, params.contactEmail ?? null,
+      params.slackChannelId ?? null, params.slackChannelName ?? null,
+      params.monthlyRetainerUsd ?? 0,
+      JSON.stringify(params.platforms ?? {}),
+      JSON.stringify(params.kpiTargets ?? []),
+      params.notes ?? null, now(), now()
+    )
+    return { id }
+  },
+
+  get(idOrSlug: string) {
+    return db().prepare(
+      `SELECT id, name, slug, status, contact_name as contactName, contact_email as contactEmail,
+       slack_channel_id as slackChannelId, slack_channel_name as slackChannelName,
+       service_type as serviceType, industry, monthly_retainer_usd as monthlyRetainerUsd,
+       platforms_json as platformsJson, kpi_targets_json as kpiTargetsJson,
+       health_score as healthScore, health_status as healthStatus,
+       last_health_check_at as lastHealthCheckAt, last_report_at as lastReportAt,
+       last_alert_at as lastAlertAt, notes, created_at as createdAt, updated_at as updatedAt
+       FROM client_accounts WHERE id = ? OR slug = ?`
+    ).get(idOrSlug, idOrSlug) as {
+      id: string; name: string; slug: string; status: string
+      contactName: string | null; contactEmail: string | null
+      slackChannelId: string | null; slackChannelName: string | null
+      serviceType: string; industry: string | null; monthlyRetainerUsd: number
+      platformsJson: string; kpiTargetsJson: string
+      healthScore: number; healthStatus: string
+      lastHealthCheckAt: string | null; lastReportAt: string | null
+      lastAlertAt: string | null; notes: string | null
+      createdAt: string; updatedAt: string
+    } | undefined
+  },
+
+  list(params: { status?: string; limit?: number } = {}) {
+    const { status, limit = 50 } = params
+    if (status) {
+      return db().prepare(
+        `SELECT id, name, slug, status, service_type as serviceType, industry,
+         health_score as healthScore, health_status as healthStatus,
+         monthly_retainer_usd as monthlyRetainerUsd,
+         last_health_check_at as lastHealthCheckAt, created_at as createdAt
+         FROM client_accounts WHERE status = ? ORDER BY name LIMIT ?`
+      ).all(status, limit) as {
+        id: string; name: string; slug: string; status: string; serviceType: string
+        industry: string | null; healthScore: number; healthStatus: string
+        monthlyRetainerUsd: number; lastHealthCheckAt: string | null; createdAt: string
+      }[]
+    }
+    return db().prepare(
+      `SELECT id, name, slug, status, service_type as serviceType, industry,
+       health_score as healthScore, health_status as healthStatus,
+       monthly_retainer_usd as monthlyRetainerUsd,
+       last_health_check_at as lastHealthCheckAt, created_at as createdAt
+       FROM client_accounts ORDER BY name LIMIT ?`
+    ).all(limit) as {
+      id: string; name: string; slug: string; status: string; serviceType: string
+      industry: string | null; healthScore: number; healthStatus: string
+      monthlyRetainerUsd: number; lastHealthCheckAt: string | null; createdAt: string
+    }[]
+  },
+
+  updateHealth(id: string, params: { healthScore: number; healthStatus: string }): void {
+    db().prepare(
+      'UPDATE client_accounts SET health_score = ?, health_status = ?, last_health_check_at = ?, updated_at = ? WHERE id = ?'
+    ).run(params.healthScore, params.healthStatus, now(), now(), id)
+  },
+
+  updateStatus(id: string, status: string): void {
+    db().prepare('UPDATE client_accounts SET status = ?, updated_at = ? WHERE id = ?').run(status, now(), id)
+  },
+}
+
+// ============================================================
+// CLIENT HEALTH SNAPSHOTS
+// ============================================================
+
+export const clientHealthSnapshots = {
+  record(params: {
+    clientId: string
+    healthScore: number
+    healthStatus: string
+    metrics: Record<string, number>
+    alerts?: Array<{ metric: string; value: number; target: number; severity: string }>
+  }): number {
+    const result = db().prepare(
+      `INSERT INTO client_health_snapshots (client_id, health_score, health_status, metrics_json, alerts_json, checked_at)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    ).run(
+      params.clientId, params.healthScore, params.healthStatus,
+      JSON.stringify(params.metrics),
+      params.alerts ? JSON.stringify(params.alerts) : null,
+      now()
+    )
+    return Number(result.lastInsertRowid)
+  },
+
+  history(clientId: string, limit = 30) {
+    return db().prepare(
+      `SELECT id, health_score as healthScore, health_status as healthStatus,
+       metrics_json as metricsJson, alerts_json as alertsJson, checked_at as checkedAt
+       FROM client_health_snapshots WHERE client_id = ? ORDER BY checked_at DESC LIMIT ?`
+    ).all(clientId, limit) as {
+      id: number; healthScore: number; healthStatus: string
+      metricsJson: string; alertsJson: string | null; checkedAt: string
+    }[]
+  },
+
+  latest(clientId: string) {
+    return db().prepare(
+      `SELECT id, health_score as healthScore, health_status as healthStatus,
+       metrics_json as metricsJson, alerts_json as alertsJson, checked_at as checkedAt
+       FROM client_health_snapshots WHERE client_id = ? ORDER BY checked_at DESC LIMIT 1`
+    ).get(clientId) as {
+      id: number; healthScore: number; healthStatus: string
+      metricsJson: string; alertsJson: string | null; checkedAt: string
+    } | undefined
+  },
+}
+
+// ============================================================
+// CSM EVALS (Agent performance per client)
+// ============================================================
+
+export const csmEvals = {
+  record(params: {
+    clientId: string
+    evalDate: string
+    healthCheckRan?: boolean
+    declineDetected?: boolean
+    declineDetectionLatencyHours?: number
+    alertDelivered?: boolean
+    reportGenerated?: boolean
+    costUsd?: number
+    details?: unknown
+  }): number {
+    const result = db().prepare(
+      `INSERT INTO csm_evals (client_id, eval_date, health_check_ran, decline_detected,
+       decline_detection_latency_hours, alert_delivered, report_generated, cost_usd, details_json, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      params.clientId, params.evalDate,
+      params.healthCheckRan ? 1 : 0, params.declineDetected ? 1 : 0,
+      params.declineDetectionLatencyHours ?? null,
+      params.alertDelivered ? 1 : 0, params.reportGenerated ? 1 : 0,
+      params.costUsd ?? 0, params.details ? JSON.stringify(params.details) : null, now()
+    )
+    return Number(result.lastInsertRowid)
+  },
+
+  performance(clientId?: string, days = 30) {
+    const since = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10)
+    if (clientId) {
+      return db().prepare(
+        `SELECT COUNT(*) as totalDays,
+         SUM(health_check_ran) as checksCompleted,
+         ROUND(100.0 * SUM(health_check_ran) / MAX(COUNT(*), 1), 1) as checkCompletionPct,
+         SUM(decline_detected) as declinesDetected,
+         ROUND(AVG(decline_detection_latency_hours), 1) as avgDetectionLatencyHours,
+         SUM(alert_delivered) as alertsDelivered,
+         SUM(report_generated) as reportsGenerated,
+         ROUND(SUM(cost_usd), 4) as totalCostUsd
+         FROM csm_evals WHERE client_id = ? AND eval_date >= ?`
+      ).get(clientId, since) as Record<string, number>
+    }
+    return db().prepare(
+      `SELECT COUNT(*) as totalDays,
+       SUM(health_check_ran) as checksCompleted,
+       ROUND(100.0 * SUM(health_check_ran) / MAX(COUNT(*), 1), 1) as checkCompletionPct,
+       SUM(decline_detected) as declinesDetected,
+       SUM(alert_delivered) as alertsDelivered,
+       SUM(report_generated) as reportsGenerated,
+       ROUND(SUM(cost_usd), 4) as totalCostUsd
+       FROM csm_evals WHERE eval_date >= ?`
+    ).get(since) as Record<string, number>
+  },
+}

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import {
   getAllMessages,
-  getAllMessagesViaFirebase, // eslint-disable-line @typescript-eslint/no-unused-vars -- used in catch fallback
+  getAllMessagesViaFirebase,
   getContact,
   type GHLMessage,
 } from '@/lib/ghl-mcp-client'
@@ -160,10 +160,9 @@ export async function GET(request: NextRequest) {
     // 1. Fetch all messages for this account in the date range
     // Try MCP first, fall back to Firebase internal API if MCP fails or returns empty
     let messages: GHLMessage[]
-    let usedFirebase = false
     try {
       messages = await getAllMessages(accountId, startDate, 5)
-    } catch (mcpError: unknown) {
+    } catch {
       // MCP failed — set empty to trigger Firebase fallback below
       messages = []
     }
@@ -172,7 +171,6 @@ export async function GET(request: NextRequest) {
     if (messages.length === 0) {
       try {
         messages = await getAllMessagesViaFirebase(accountId, startDate)
-        usedFirebase = true
       } catch {
         // Firebase also failed — return what we have (empty)
       }

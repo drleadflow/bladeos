@@ -4,6 +4,7 @@ export { measureAllKpis, registerMeasurement } from './kpi-measurer.js'
 export { costBurnMonitor } from './cost-burn.js'
 export { memoryHealthMonitor } from './memory-health.js'
 export { employeeHealthMonitor } from './employee-health.js'
+export { clientHealthMonitor } from './client-health.js'
 export { MonitorChecker } from './checker.js'
 
 import { monitors } from '@blade/db'
@@ -11,12 +12,14 @@ import { MonitorChecker } from './checker.js'
 import { costBurnMonitor } from './cost-burn.js'
 import { memoryHealthMonitor } from './memory-health.js'
 import { employeeHealthMonitor } from './employee-health.js'
+import { clientHealthMonitor } from './client-health.js'
 import type { MonitorDefinition } from './types.js'
 
 const BUILTIN_MONITORS: readonly MonitorDefinition[] = [
   costBurnMonitor,
   memoryHealthMonitor,
   employeeHealthMonitor,
+  clientHealthMonitor,
 ]
 
 export function setupBuiltinMonitors(): MonitorChecker {
