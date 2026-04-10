@@ -1,4 +1,6 @@
 export type { MonitorDefinition, MonitorCheckResult } from './types.js'
+export { startMonitorScheduler, runMonitorsNow, stopMonitorScheduler } from './scheduler.js'
+export { measureAllKpis, registerMeasurement } from './kpi-measurer.js'
 export { costBurnMonitor } from './cost-burn.js'
 export { memoryHealthMonitor } from './memory-health.js'
 export { employeeHealthMonitor } from './employee-health.js'

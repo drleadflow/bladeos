@@ -17,7 +17,7 @@ import {
   stopContainer,
   removeContainer,
 } from '@blade/docker-runner'
-import { jobs, jobLogs, workerSessions } from '@blade/db'
+import { jobs, jobLogs, workerSessions, jobEvals } from '@blade/db'
 import { logger } from '@blade/shared'
 import { runAgentLoop } from '../agent-loop.js'
 import { registerTool, getAllToolDefinitions, createToolScope, registerScopedTool, getScopedToolDefinitions, destroyToolScope } from '../tool-registry.js'
@@ -145,16 +145,163 @@ function runLocal(cmd: string, cwd: string): { stdout: string; stderr: string; e
   }
 }
 
-function detectTestCommand(repoDir: string): string {
-  try {
-    const pkg = JSON.parse(readFileSync(join(repoDir, 'package.json'), 'utf-8'))
-    if (pkg.scripts?.test && pkg.scripts.test !== 'echo "Error: no test specified" && exit 1') {
-      return 'npm test'
-    }
-  } catch {
-    // No package.json or parse error
+interface RepoDetection {
+  testCommand: string
+  installCommand: string | null
+  language: 'node' | 'python' | 'go' | 'rust' | 'ruby' | 'elixir' | 'java' | 'unknown'
+  packageManager: string | null
+}
+
+function detectRepo(repoDir: string): RepoDetection {
+  const exists = (file: string): boolean => {
+    try { statSync(join(repoDir, file)); return true } catch { return false }
   }
-  return 'npm test'
+  const readJson = (file: string): Record<string, unknown> | null => {
+    try { return JSON.parse(readFileSync(join(repoDir, file), 'utf-8')) } catch { return null }
+  }
+
+  // Node.js — detect package manager
+  const pkg = readJson('package.json') as { scripts?: Record<string, string> } | null
+  if (pkg) {
+    const hasTest = pkg.scripts?.test && pkg.scripts.test !== 'echo "Error: no test specified" && exit 1'
+    let pm: 'pnpm' | 'yarn' | 'bun' | 'npm' = 'npm'
+    if (exists('pnpm-lock.yaml')) pm = 'pnpm'
+    else if (exists('yarn.lock')) pm = 'yarn'
+    else if (exists('bun.lockb')) pm = 'bun'
+
+    return {
+      testCommand: hasTest ? `${pm} test` : `${pm} test`,
+      installCommand: `${pm} install`,
+      language: 'node',
+      packageManager: pm,
+    }
+  }
+
+  // Python
+  if (exists('pyproject.toml') || exists('setup.py') || exists('setup.cfg')) {
+    const hasRequirements = exists('requirements.txt')
+    const hasPipfile = exists('Pipfile')
+    const hasPoetry = exists('poetry.lock')
+    let install: string | null = null
+    let test = 'python -m pytest'
+
+    if (hasPoetry) {
+      install = 'poetry install'
+      test = 'poetry run pytest'
+    } else if (hasPipfile) {
+      install = 'pipenv install --dev'
+      test = 'pipenv run pytest'
+    } else if (hasRequirements) {
+      install = 'pip install -r requirements.txt'
+    }
+
+    // Check for tox
+    if (exists('tox.ini')) test = 'tox'
+    // Check for Makefile with test target
+    if (exists('Makefile')) {
+      try {
+        const makefile = readFileSync(join(repoDir, 'Makefile'), 'utf-8')
+        if (makefile.includes('test:')) test = 'make test'
+      } catch { /* ignore */ }
+    }
+
+    return { testCommand: test, installCommand: install, language: 'python', packageManager: null }
+  }
+
+  // Go
+  if (exists('go.mod')) {
+    return {
+      testCommand: 'go test ./...',
+      installCommand: 'go mod download',
+      language: 'go',
+      packageManager: null,
+    }
+  }
+
+  // Rust
+  if (exists('Cargo.toml')) {
+    return {
+      testCommand: 'cargo test',
+      installCommand: 'cargo build',
+      language: 'rust',
+      packageManager: 'cargo',
+    }
+  }
+
+  // Ruby
+  if (exists('Gemfile')) {
+    const hasRspec = exists('.rspec') || exists('spec')
+    return {
+      testCommand: hasRspec ? 'bundle exec rspec' : 'bundle exec rake test',
+      installCommand: 'bundle install',
+      language: 'ruby',
+      packageManager: 'bundler',
+    }
+  }
+
+  // Elixir
+  if (exists('mix.exs')) {
+    return {
+      testCommand: 'mix test',
+      installCommand: 'mix deps.get',
+      language: 'elixir',
+      packageManager: 'mix',
+    }
+  }
+
+  // Java / Maven / Gradle
+  if (exists('pom.xml')) {
+    return { testCommand: 'mvn test', installCommand: 'mvn install -DskipTests', language: 'java', packageManager: 'maven' }
+  }
+  if (exists('build.gradle') || exists('build.gradle.kts')) {
+    return { testCommand: './gradlew test', installCommand: './gradlew build -x test', language: 'java', packageManager: 'gradle' }
+  }
+
+  // Makefile fallback
+  if (exists('Makefile')) {
+    try {
+      const makefile = readFileSync(join(repoDir, 'Makefile'), 'utf-8')
+      if (makefile.includes('test:')) {
+        return { testCommand: 'make test', installCommand: null, language: 'unknown', packageManager: null }
+      }
+    } catch { /* ignore */ }
+  }
+
+  return { testCommand: 'npm test', installCommand: null, language: 'unknown', packageManager: null }
+}
+
+/** Smart truncation that preserves error lines from test output */
+function smartTruncateTestOutput(output: string, maxLength: number = 20_000): string {
+  if (output.length <= maxLength) return output
+
+  // Find error-relevant lines (failures, assertions, stack traces)
+  const lines = output.split('\n')
+  const errorPatterns = /(?:FAIL|ERROR|error|assert|expect|panic|traceback|exception|✗|✘|×|failed)/i
+  const errorLines: string[] = []
+  const normalLines: string[] = []
+
+  for (const line of lines) {
+    if (errorPatterns.test(line)) {
+      errorLines.push(line)
+    } else {
+      normalLines.push(line)
+    }
+  }
+
+  // Always include the last 50 lines (summary area) + all error lines
+  const tail = lines.slice(-50).join('\n')
+  const errors = errorLines.join('\n')
+
+  const budget = maxLength - tail.length - errors.length - 200
+  const head = budget > 0 ? lines.slice(0, Math.min(20, lines.length)).join('\n') : ''
+
+  return [
+    head,
+    `\n... [${lines.length - 70} lines truncated — showing errors and summary] ...\n`,
+    errors,
+    '\n--- Test Summary ---\n',
+    tail,
+  ].join('\n').slice(0, maxLength)
 }
 
 // ============================================================
@@ -630,6 +777,11 @@ export async function runCodingPipeline(params: {
   let container: Awaited<ReturnType<typeof createContainer>> | undefined
   let useDocker = false
   let toolScopeId: string | undefined
+  const pipelineStartTime = performance.now()
+  let codingStartTime = 0
+  let codingDurationMs = 0
+  let testingStartTime = 0
+  let testingDurationMs = 0
 
   try {
     // ── Step 1: Clone ──────────────────────────────────────────
@@ -682,6 +834,7 @@ export async function runCodingPipeline(params: {
     // ── Step 4: Coding with agent loop ─────────────────────────
     updateStatus(jobId, 'coding', 'Agent is coding the solution', undefined, onStatus)
     throwIfStopRequested(jobId, onStatus)
+    codingStartTime = performance.now()
 
     toolScopeId = createToolScope()
     registerCodingTools(adapter, toolScopeId)
@@ -739,7 +892,8 @@ export async function runCodingPipeline(params: {
       },
     })
 
-    jobLogs.add(jobId, 'info', `Agent completed: ${agentResult.totalToolCalls} tool calls, $${agentResult.totalCost.toFixed(4)} cost`)
+    codingDurationMs = Math.round(performance.now() - codingStartTime)
+    jobLogs.add(jobId, 'info', `Agent completed: ${agentResult.totalToolCalls} tool calls, $${agentResult.totalCost.toFixed(4)} cost, ${Math.round(codingDurationMs / 1000)}s`)
     throwIfStopRequested(jobId, onStatus)
     jobs.updateStatus(jobId, 'coding', {
       totalCost: agentResult.totalCost,
@@ -751,7 +905,26 @@ export async function runCodingPipeline(params: {
     updateStatus(jobId, 'testing', 'Running tests', undefined, onStatus)
     throwIfStopRequested(jobId, onStatus)
 
-    const testCommand = detectTestCommand(repoDir)
+    testingStartTime = performance.now()
+    const repoInfo = detectRepo(repoDir)
+    const testCommand = repoInfo.testCommand
+    jobLogs.add(jobId, 'info', `Detected ${repoInfo.language} repo (${repoInfo.packageManager ?? 'no package manager'}), test: "${testCommand}"`)
+
+    // Install dependencies before running tests
+    if (repoInfo.installCommand) {
+      updateStatus(jobId, 'testing', `Installing dependencies: ${repoInfo.installCommand}`, undefined, onStatus)
+      const installResult = useDocker && container
+        ? await execInContainer(container, ['sh', '-c', repoInfo.installCommand])
+        : runLocal(repoInfo.installCommand, repoDir)
+
+      if (installResult.exitCode !== 0) {
+        jobLogs.add(jobId, 'warn', `Dependency install failed (exit ${installResult.exitCode}): ${installResult.stderr.slice(0, 1000)}`)
+      } else {
+        jobLogs.add(jobId, 'info', 'Dependencies installed successfully')
+      }
+      throwIfStopRequested(jobId, onStatus)
+    }
+
     let testsPassed = false
     const maxFixCycles = 3
     const fixResults: AgentLoopResult[] = []
@@ -800,7 +973,7 @@ export async function runCodingPipeline(params: {
         lastSeenAt: new Date().toISOString(),
         latestSummary: `Tests failed; starting fix cycle ${cycle + 1}`,
       })
-      const errorOutput = lastTestOutput.slice(0, 4000)
+      const errorOutput = smartTruncateTestOutput(lastTestOutput, 20_000)
 
       const fixMessage: AgentMessage = {
         role: 'user',
@@ -844,6 +1017,64 @@ export async function runCodingPipeline(params: {
         totalCost: agentResult.totalCost + fixResult.totalCost,
         totalToolCalls: agentResult.totalToolCalls + fixResult.totalToolCalls,
       })
+    }
+
+    // ── Eval: Record structured job metrics ─────────────────────
+    testingDurationMs = Math.round(performance.now() - testingStartTime)
+    const totalPipelineDurationMs = Math.round(performance.now() - pipelineStartTime)
+
+    // Count changed files and diff stats
+    let filesChanged = 0
+    let linesAdded = 0
+    let linesRemoved = 0
+    try {
+      const diffResult = runLocal('git diff --numstat HEAD~1 2>/dev/null || git diff --numstat', repoDir)
+      if (diffResult.exitCode === 0 && diffResult.stdout) {
+        for (const line of diffResult.stdout.split('\n').filter(Boolean)) {
+          const [added, removed] = line.split('\t')
+          filesChanged++
+          linesAdded += parseInt(added, 10) || 0
+          linesRemoved += parseInt(removed, 10) || 0
+        }
+      }
+    } catch { /* ignore */ }
+
+    // Calculate total cost including fix cycles
+    const totalFixCost = fixResults.reduce((sum, r) => sum + r.totalCost, 0)
+    const totalFixToolCalls = fixResults.reduce((sum, r) => sum + r.totalToolCalls, 0)
+    const totalFixTokensIn = fixResults.reduce((sum, r) => sum + r.totalInputTokens, 0)
+    const totalFixTokensOut = fixResults.reduce((sum, r) => sum + r.totalOutputTokens, 0)
+
+    try {
+      jobEvals.record({
+        jobId,
+        status: testsPassed ? 'passed' : (fixResults.length > 0 ? 'partial' : 'failed'),
+        fixCyclesUsed: fixResults.length,
+        maxFixCycles,
+        filesChanged,
+        linesAdded,
+        linesRemoved,
+        totalCostUsd: agentResult.totalCost + totalFixCost,
+        totalInputTokens: agentResult.totalInputTokens + totalFixTokensIn,
+        totalOutputTokens: agentResult.totalOutputTokens + totalFixTokensOut,
+        totalToolCalls: agentResult.totalToolCalls + totalFixToolCalls,
+        totalIterations: agentResult.turns.length + fixResults.reduce((sum, r) => sum + r.turns.length, 0),
+        durationMs: totalPipelineDurationMs,
+        codingDurationMs,
+        testingDurationMs,
+        language: repoInfo.language,
+        repoUrl,
+        agentModel,
+        stopReason: agentResult.stopReason,
+        details: {
+          testOutput: lastTestOutput.slice(0, 2000),
+          testCommand,
+          packageManager: repoInfo.packageManager,
+        },
+      })
+      jobLogs.add(jobId, 'info', `Eval recorded: ${testsPassed ? 'PASSED' : 'FAILED'} | ${filesChanged} files | ${fixResults.length} fix cycles | $${(agentResult.totalCost + totalFixCost).toFixed(4)}`)
+    } catch (evalErr) {
+      logger.debug('Pipeline', `Failed to record eval: ${evalErr instanceof Error ? evalErr.message : String(evalErr)}`)
     }
 
     // ── Step 6: Create PR ──────────────────────────────────────

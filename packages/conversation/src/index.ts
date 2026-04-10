@@ -2,6 +2,7 @@
 export { createConversationEngine } from './engine.js'
 export type { ConversationEngine, ConversationEngineOptions } from './engine.js'
 export { startTelegramBot, cleanResponse as cleanTelegramResponse, splitMessage as splitTelegramMessage } from './telegram-bot.js'
+export { startSlackBot } from './slack-bot.js'
 
 // Context & Policy
 export { buildSystemPrompt } from './context-builder.js'

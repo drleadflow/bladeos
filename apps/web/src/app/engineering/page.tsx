@@ -44,6 +44,7 @@ const QUICK_LINKS = [
   { href: '/engineering/runs', label: 'Pipeline Runs', description: 'Live execution timeline of all agent events.' },
   { href: '/engineering/workers', label: 'Active Workers', description: 'Control and inspect live worker sessions.' },
   { href: '/engineering/jobs', label: 'Coding Jobs', description: 'View and manage async coding jobs.' },
+  { href: '/engineering/evals', label: 'Agent Evals', description: 'Success rates, cost trends, and performance metrics per job.' },
   { href: '/engineering/costs', label: 'AI Costs', description: 'Model spend, token telemetry, and daily breakdown.' },
 ]
 

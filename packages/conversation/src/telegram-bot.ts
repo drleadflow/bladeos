@@ -12,6 +12,14 @@ import { createConversationEngine } from './engine.js'
 import { TelegramAdapter } from './adapters/telegram.js'
 
 const TELEGRAM_MAX_MESSAGE_LENGTH = 4096
+const REPLY_TIMEOUT_MS = 90_000
+const SEND_MAX_RETRIES = 3
+const SEND_RETRY_DELAYS_MS = [1000, 2000, 4000]
+
+// Per-chat concurrency lock — prevents simultaneous processing for the same chat
+const activeChatReplies = new Map<string, Promise<void>>()
+// Queue: if a message arrives while one is processing, hold the latest
+const pendingMessages = new Map<string, { text: string; resolve: () => void }>()
 
 const SYSTEM_PROMPT = `You are Blade, an AI super agent built by Blade Labs. You are helpful, direct, and capable.
 
@@ -171,13 +179,64 @@ function recordLocalEvent(params: {
   }
 }
 
-async function sendResponse(bot: TelegramBot, chatId: number, text: string): Promise<void> {
+async function sendWithRetry(bot: TelegramBot, chatId: number, text: string): Promise<void> {
   for (const chunk of splitMessage(text)) {
-    await bot.sendMessage(chatId, chunk)
+    let lastError: unknown
+    for (let attempt = 0; attempt < SEND_MAX_RETRIES; attempt++) {
+      try {
+        await bot.sendMessage(chatId, chunk)
+        lastError = undefined
+        break
+      } catch (err) {
+        lastError = err
+        const msg = err instanceof Error ? err.message : String(err)
+
+        // Telegram flood control — respect retry_after
+        if (msg.includes('retry after') || msg.includes('Too Many Requests')) {
+          const match = msg.match(/retry after (\d+)/)
+          const waitSec = match ? parseInt(match[1], 10) : 5
+          logger.warn('Telegram', `Flood control: waiting ${waitSec}s before retry`)
+          await sleep(waitSec * 1000)
+          continue
+        }
+
+        // Timeout — do NOT retry (message may have been delivered)
+        if (msg.includes('ETIMEDOUT') || msg.includes('ETIMEOUT') || msg.toLowerCase().includes('timed out')) {
+          logger.warn('Telegram', `Send timed out — skipping retry to avoid duplicate`)
+          break
+        }
+
+        // Network error — retry with backoff
+        if (attempt < SEND_MAX_RETRIES - 1) {
+          const delay = SEND_RETRY_DELAYS_MS[attempt] ?? 2000
+          logger.warn('Telegram', `Send attempt ${attempt + 1} failed: ${msg}. Retrying in ${delay}ms`)
+          await sleep(delay)
+        }
+      }
+    }
+    if (lastError) {
+      logger.error('Telegram', `All send retries exhausted for chat ${chatId}: ${lastError instanceof Error ? lastError.message : String(lastError)}`)
+    }
   }
 }
 
-async function runTelegramReply(params: {
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${ms}ms`))
+    }, ms)
+    promise.then(
+      (val) => { clearTimeout(timer); resolve(val) },
+      (err) => { clearTimeout(timer); reject(err) },
+    )
+  })
+}
+
+async function runTelegramReplyInner(params: {
   bot: TelegramBot
   chatId: string
   userText: string
@@ -204,18 +263,22 @@ async function runTelegramReply(params: {
     detail: { channel: 'telegram', voice: sendVoiceReply },
   })
 
-  await bot.sendChatAction(Number(chatId), 'typing')
+  await bot.sendChatAction(Number(chatId), 'typing').catch(() => {})
 
-  const responseText = await telegramAdapter.deliver(
-    conversationEngine.reply({
-      ...request,
-      conversationId,
-      systemPromptOverride: telegramPrompt(),
-    }),
-    {
-      destination: chatId,
-      conversationId,
-    }
+  const responseText = await withTimeout(
+    telegramAdapter.deliver(
+      conversationEngine.reply({
+        ...request,
+        conversationId,
+        systemPromptOverride: telegramPrompt(),
+      }),
+      {
+        destination: chatId,
+        conversationId,
+      }
+    ),
+    REPLY_TIMEOUT_MS,
+    `Reply for chat ${chatId}`
   )
 
   const userFacingFailure = toUserFacingFailure(responseText)
@@ -235,7 +298,7 @@ async function runTelegramReply(params: {
       || 'I processed your request but couldn\'t generate a response. Could you try rephrasing?'
   )
 
-  await sendResponse(bot, Number(chatId), cleaned)
+  await sendWithRetry(bot, Number(chatId), cleaned)
 
   if (sendVoiceReply) {
     try {
@@ -252,7 +315,58 @@ async function runTelegramReply(params: {
   }
 }
 
+/**
+ * Per-chat concurrency guard + timeout wrapper.
+ * If a reply is already in-flight for this chat, the new message waits.
+ * The inner reply has a hard timeout to prevent infinite hangs.
+ */
+async function runTelegramReply(params: {
+  bot: TelegramBot
+  chatId: string
+  userText: string
+  sendVoiceReply?: boolean
+}): Promise<void> {
+  const { bot, chatId } = params
+
+  // Wait for any in-flight reply on this chat to finish
+  const existing = activeChatReplies.get(chatId)
+  if (existing) {
+    logger.info('Telegram', `Chat ${chatId} has in-flight reply, queuing message`)
+    await existing.catch(() => {})
+  }
+
+  const replyPromise = runTelegramReplyInner(params).catch(async (err) => {
+    const msg = err instanceof Error ? err.message : String(err)
+    logger.error('Telegram', `Reply failed for chat ${chatId}: ${msg}`)
+
+    // ALWAYS notify user — never go silent
+    const userMsg = msg.includes('timed out')
+      ? 'Sorry, my response took too long. Please try again.'
+      : `Something went wrong. Please try again. (${msg.slice(0, 120)})`
+    await sendWithRetry(bot, Number(chatId), userMsg)
+  }).finally(() => {
+    activeChatReplies.delete(chatId)
+  })
+
+  activeChatReplies.set(chatId, replyPromise)
+  await replyPromise
+}
+
 export function startTelegramBot(token: string, allowedChatIds?: string[]): TelegramBot {
+  // ── Startup validation (fail loud, not silent) ──────────────────
+  if (!token || token.length < 20) {
+    throw new Error('TELEGRAM_BOT_TOKEN is missing or invalid. Cannot start bot.')
+  }
+
+  const hasAnyProvider = !!(
+    process.env.OPENROUTER_API_KEY
+    || process.env.ANTHROPIC_API_KEY
+    || process.env.OPENAI_API_KEY
+  )
+  if (!hasAnyProvider) {
+    throw new Error('No AI provider API key configured (OPENROUTER_API_KEY, ANTHROPIC_API_KEY, or OPENAI_API_KEY). Bot would be unable to generate responses.')
+  }
+
   initializeDb()
 
   const bot = new TelegramBot(token, { polling: true })
@@ -262,6 +376,34 @@ export function startTelegramBot(token: string, allowedChatIds?: string[]): Tele
       : null
 
   logger.info('Telegram', 'Telegram bot starting...')
+
+  // ── Silence detection heartbeat ─────────────────────────────────
+  // Track wall-clock time since last successful message delivery.
+  // If the bot goes silent (no sends for SILENCE_THRESHOLD_MS), log a warning.
+  const SILENCE_THRESHOLD_MS = 5 * 60 * 1000 // 5 minutes
+  let lastSuccessfulSend = Date.now()
+  let silenceWarningEmitted = false
+
+  const silenceWatcher = setInterval(() => {
+    const silentMs = Date.now() - lastSuccessfulSend
+    if (silentMs > SILENCE_THRESHOLD_MS && !silenceWarningEmitted) {
+      logger.warn('Telegram', `Bot has not sent a message in ${Math.round(silentMs / 1000)}s — possible silence condition`)
+      silenceWarningEmitted = true
+    }
+    if (silentMs <= SILENCE_THRESHOLD_MS && silenceWarningEmitted) {
+      silenceWarningEmitted = false
+    }
+  }, 60_000)
+  silenceWatcher.unref() // Don't prevent process exit
+
+  // Wrap sendMessage to track successful sends
+  const originalSendMessage = bot.sendMessage.bind(bot)
+  bot.sendMessage = async function (...args: Parameters<typeof bot.sendMessage>) {
+    const result = await originalSendMessage(...args)
+    lastSuccessfulSend = Date.now()
+    silenceWarningEmitted = false
+    return result
+  } as typeof bot.sendMessage
 
   function isAllowed(chatId: number): boolean {
     if (!allowedSet) return true
@@ -314,7 +456,7 @@ export function startTelegramBot(token: string, allowedChatIds?: string[]): Tele
         (memory, index) =>
           `${index + 1}. [${memory.type}] ${memory.content} (confidence: ${(memory.confidence * 100).toFixed(0)}%)`
       )
-      await sendResponse(bot, msg.chat.id, `Recent Memories\n\n${lines.join('\n')}`)
+      await sendWithRetry(bot, msg.chat.id, `Recent Memories\n\n${lines.join('\n')}`)
     } catch (err) {
       logger.error('Telegram', `/memory error: ${err instanceof Error ? err.message : String(err)}`)
       await bot.sendMessage(msg.chat.id, 'Failed to retrieve memories.').catch(() => {})
@@ -338,7 +480,7 @@ export function startTelegramBot(token: string, allowedChatIds?: string[]): Tele
         modelLines ? `\nBy model:\n${modelLines}` : '',
       ].join('\n')
 
-      await sendResponse(bot, msg.chat.id, text)
+      await sendWithRetry(bot, msg.chat.id, text)
     } catch (err) {
       logger.error('Telegram', `/costs error: ${err instanceof Error ? err.message : String(err)}`)
       await bot.sendMessage(msg.chat.id, 'Failed to retrieve cost summary.').catch(() => {})
@@ -356,6 +498,77 @@ export function startTelegramBot(token: string, allowedChatIds?: string[]): Tele
       await bot.sendMessage(msg.chat.id, 'New conversation started. Send me a message!')
     } catch (err) {
       logger.error('Telegram', `/new error: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  })
+
+  bot.on('photo', async (msg) => {
+    if (!isAllowed(msg.chat.id)) return
+
+    const chatId = String(msg.chat.id)
+
+    try {
+      // Get the highest resolution photo (last in array)
+      const photos = msg.photo!
+      const bestPhoto = photos[photos.length - 1]
+      const fileLink = await bot.getFileLink(bestPhoto.file_id)
+      const imgResponse = await fetch(fileLink)
+      if (!imgResponse.ok) {
+        throw new Error(`Failed to download image: ${imgResponse.status}`)
+      }
+
+      const imgBuffer = Buffer.from(await imgResponse.arrayBuffer())
+      const base64Data = imgBuffer.toString('base64')
+
+      // Determine media type from URL
+      const url = fileLink.toLowerCase()
+      const mediaType = url.endsWith('.png') ? 'image/png'
+        : url.endsWith('.webp') ? 'image/webp'
+        : 'image/jpeg'
+
+      // Build a message with the image inline for the model
+      const caption = msg.caption || 'What do you see in this image?'
+      const userText = `[User sent an image with caption: "${caption}"]\n\nPlease analyze the image and respond to the user's request.`
+
+      const conversationId = getOrCreateConversation(chatId)
+
+      recordLocalEvent({
+        chatId,
+        conversationId,
+        eventType: 'conversation',
+        summary: `Photo received: ${clip(caption, 90)}`,
+        detail: { channel: 'telegram', source: 'photo' },
+      })
+
+      await bot.sendChatAction(Number(chatId), 'typing').catch(() => {})
+
+      // Use the vision tool directly: save to temp file, call analyze_image via conversation
+      const { writeFileSync, mkdtempSync } = await import('node:fs')
+      const { join } = await import('node:path')
+      const { tmpdir } = await import('node:os')
+
+      const tmpDir = mkdtempSync(join(tmpdir(), 'blade-img-'))
+      const ext = mediaType === 'image/png' ? '.png' : mediaType === 'image/webp' ? '.webp' : '.jpg'
+      const imgPath = join(tmpDir, `telegram-photo${ext}`)
+      writeFileSync(imgPath, imgBuffer)
+
+      // Run reply with context about the image
+      const imageContext = `The user sent a photo. The image has been saved to ${imgPath}. Use the analyze_image tool with that path to see the image and answer the user's question: "${caption}"`
+
+      await runTelegramReply({
+        bot,
+        chatId,
+        userText: imageContext,
+      })
+
+      // Cleanup temp file
+      try {
+        const { unlinkSync, rmdirSync } = await import('node:fs')
+        unlinkSync(imgPath)
+        rmdirSync(tmpDir)
+      } catch { /* best effort cleanup */ }
+    } catch (err) {
+      logger.error('Telegram', `Photo error: ${err instanceof Error ? err.message : String(err)}`)
+      await sendWithRetry(bot, msg.chat.id, 'Failed to process the image. Please try again.')
     }
   })
 
@@ -397,7 +610,7 @@ export function startTelegramBot(token: string, allowedChatIds?: string[]): Tele
       })
     } catch (err) {
       logger.error('Telegram', `Voice error: ${err instanceof Error ? err.message : String(err)}`)
-      await bot.sendMessage(msg.chat.id, `Voice error: ${String(err).slice(0, 200)}`).catch(() => {})
+      await sendWithRetry(bot, msg.chat.id, 'Voice processing failed. Please try again or send a text message.')
     }
   })
 
@@ -405,6 +618,8 @@ export function startTelegramBot(token: string, allowedChatIds?: string[]): Tele
     if (!msg.text || msg.text.startsWith('/')) return
     if (!isAllowed(msg.chat.id)) return
 
+    // runTelegramReply handles its own errors internally (never throws to caller)
+    // but we keep a safety net that ALWAYS notifies the user
     try {
       await runTelegramReply({
         bot,
@@ -412,16 +627,37 @@ export function startTelegramBot(token: string, allowedChatIds?: string[]): Tele
         userText: msg.text.trim(),
       })
     } catch (err) {
-      logger.error('Telegram', `Message error: ${err instanceof Error ? err.message : String(err)}`)
-      await bot.sendMessage(msg.chat.id, `Error: ${String(err).slice(0, 200)}`).catch(() => {})
+      const errMsg = err instanceof Error ? err.message : String(err)
+      logger.error('Telegram', `Unhandled message error: ${errMsg}`)
+      // Last-resort notification — retry send, never swallow silently
+      await sendWithRetry(bot, msg.chat.id, `Something went wrong. Please try again.`)
     }
   })
 
+  // ── Hardened polling error handler (never crash, never exit) ──────
+  let consecutivePollingErrors = 0
   bot.on('polling_error', (err) => {
-    logger.error('Telegram', `Polling error: ${err instanceof Error ? err.message : String(err)}`)
+    consecutivePollingErrors++
+    const msg = err instanceof Error ? err.message : String(err)
+    logger.error('Telegram', `Polling error #${consecutivePollingErrors}: ${msg}`)
+
+    // After 10 consecutive polling errors, log critical warning
+    // The bot library handles reconnection internally, but we track the pattern
+    if (consecutivePollingErrors >= 10) {
+      logger.error('Telegram', `${consecutivePollingErrors} consecutive polling errors — bot may be in degraded state. Check network and bot token.`)
+    }
   })
 
-  logger.info('Telegram', 'Telegram bot started successfully')
+  // Reset consecutive error counter on any successful message receive
+  bot.on('message', () => { consecutivePollingErrors = 0 })
+
+  // ── Startup self-test: verify bot token is valid ────────────────
+  bot.getMe().then((me) => {
+    logger.info('Telegram', `Bot started: @${me.username} (id: ${me.id})`)
+  }).catch((err) => {
+    logger.error('Telegram', `Bot token validation failed: ${err instanceof Error ? err.message : String(err)}. Bot may not receive messages.`)
+  })
+
   return bot
 }
 

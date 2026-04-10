@@ -12,10 +12,13 @@ import { logger } from '@blade/shared'
 // ANTHROPIC PROVIDER
 // ============================================================
 
+const MODEL_TIMEOUT_MS = 60_000 // 60s timeout on all model HTTP calls
+
 function createAnthropicClient(config: ModelConfig): Anthropic {
   return new Anthropic({
     apiKey: config.apiKey,
     baseURL: config.baseUrl,
+    timeout: MODEL_TIMEOUT_MS,
   })
 }
 
@@ -67,6 +70,7 @@ function createOpenAIClient(config: ModelConfig): OpenAI {
   return new OpenAI({
     apiKey: config.apiKey,
     baseURL: config.baseUrl,
+    timeout: MODEL_TIMEOUT_MS,
   })
 }
 
@@ -181,8 +185,14 @@ function fromOpenAIResponse(response: OpenAI.Chat.Completions.ChatCompletion): M
       let parsedArgs: Record<string, unknown> = {}
       try {
         parsedArgs = JSON.parse(tc.function.arguments)
-      } catch {
-        parsedArgs = { _raw: tc.function.arguments }
+      } catch (parseErr) {
+        // Return error as text so the model knows the parse failed and can retry
+        logger.warn('ModelProvider', `Failed to parse tool arguments for "${tc.function.name}": ${tc.function.arguments}`)
+        content.push({
+          type: 'text' as const,
+          text: `[Tool call error] Failed to parse arguments for "${tc.function.name}": invalid JSON. Please retry with valid JSON arguments.`,
+        })
+        continue
       }
       content.push({
         type: 'tool_use' as const,
@@ -398,7 +408,12 @@ async function* streamOpenAI(
     try {
       parsedArgs = JSON.parse(tc.arguments)
     } catch {
-      parsedArgs = { _raw: tc.arguments }
+      logger.warn('ModelProvider', `Failed to parse streamed tool arguments for "${tc.name}": ${tc.arguments.slice(0, 200)}`)
+      content.push({
+        type: 'text' as const,
+        text: `[Tool call error] Failed to parse arguments for "${tc.name}": invalid JSON. Please retry with valid JSON arguments.`,
+      })
+      continue
     }
     content.push({
       type: 'tool_use' as const,
@@ -593,8 +608,8 @@ export function resolveSmartModelConfig(
       return {
         provider: 'openrouter',
         modelId: complexity === 'light'
-          ? 'anthropic/claude-haiku-4-20250514'
-          : 'anthropic/claude-sonnet-4-20250514',
+          ? 'anthropic/claude-haiku-4.5'
+          : 'anthropic/claude-sonnet-4',
         apiKey: process.env.OPENROUTER_API_KEY!,
         baseUrl: 'https://openrouter.ai/api/v1',
       }
@@ -627,7 +642,7 @@ export function resolveSmartModelConfig(
     if (hasOpenRouter) {
       return {
         provider: 'openrouter',
-        modelId: 'anthropic/claude-haiku-4-20250514',
+        modelId: 'anthropic/claude-haiku-4.5',
         apiKey: process.env.OPENROUTER_API_KEY!,
         baseUrl: 'https://openrouter.ai/api/v1',
       }
@@ -653,7 +668,7 @@ export function resolveSmartModelConfig(
   if (hasOpenRouter) {
     return {
       provider: 'openrouter',
-      modelId: 'anthropic/claude-sonnet-4-20250514',
+      modelId: 'anthropic/claude-sonnet-4',
       apiKey: process.env.OPENROUTER_API_KEY!,
       baseUrl: 'https://openrouter.ai/api/v1',
     }
@@ -661,6 +676,57 @@ export function resolveSmartModelConfig(
 
   // Nothing configured
   return { provider: 'anthropic', modelId: 'claude-sonnet-4-20250514', apiKey: '' }
+}
+
+// ============================================================
+// PROVIDER FALLBACK CHAIN
+// ============================================================
+
+/**
+ * Returns an ordered list of ModelConfigs to try, based on what's configured.
+ * Primary provider first, then fallbacks. Used by the agent loop when the
+ * primary provider fails all retries.
+ */
+export function resolveSmartModelConfigChain(
+  complexity: TaskComplexity = 'standard',
+  options?: { needsToolCalling?: boolean }
+): ModelConfig[] {
+  const primary = resolveSmartModelConfig(complexity, options)
+  const chain: ModelConfig[] = [primary]
+
+  const hasOpenRouter = !!process.env.OPENROUTER_API_KEY
+  const hasOpenAI = !!process.env.OPENAI_API_KEY
+  const hasAnthropicApi = !!(process.env.ANTHROPIC_API_KEY) && !(process.env.ANTHROPIC_API_KEY ?? '').startsWith('sk-ant-oat01-')
+
+  const modelForComplexity = complexity === 'light'
+    ? { anthropic: 'claude-haiku-4-20250514', openrouter: 'anthropic/claude-haiku-4.5', openai: 'gpt-4o-mini' }
+    : { anthropic: 'claude-sonnet-4-20250514', openrouter: 'anthropic/claude-sonnet-4', openai: 'gpt-4o' }
+
+  // Add fallbacks that aren't the same provider as primary
+  if (primary.provider !== 'anthropic' && hasAnthropicApi) {
+    chain.push({
+      provider: 'anthropic',
+      modelId: modelForComplexity.anthropic,
+      apiKey: process.env.ANTHROPIC_API_KEY!,
+    })
+  }
+  if (primary.provider !== 'openrouter' && hasOpenRouter) {
+    chain.push({
+      provider: 'openrouter',
+      modelId: modelForComplexity.openrouter,
+      apiKey: process.env.OPENROUTER_API_KEY!,
+      baseUrl: 'https://openrouter.ai/api/v1',
+    })
+  }
+  if (primary.provider !== 'openai' && hasOpenAI) {
+    chain.push({
+      provider: 'openai',
+      modelId: modelForComplexity.openai,
+      apiKey: process.env.OPENAI_API_KEY!,
+    })
+  }
+
+  return chain
 }
 
 // ============================================================

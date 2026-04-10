@@ -576,3 +576,136 @@ ${truncatedDiff}
     }
   }
 )
+
+// ============================================================
+// SLACK TOOLS
+// ============================================================
+
+async function slackAPI(method: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const token = process.env.SLACK_ACCESS_TOKEN
+  if (!token) {
+    throw new Error('SLACK_ACCESS_TOKEN not configured. Set it in your .env file.')
+  }
+
+  const response = await fetch(`https://slack.com/api/${method}`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json; charset=utf-8',
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(15_000),
+  })
+
+  if (!response.ok) {
+    throw new Error(`Slack API HTTP ${response.status}: ${response.statusText}`)
+  }
+
+  const data = await response.json() as Record<string, unknown>
+  if (!data.ok) {
+    throw new Error(`Slack API error: ${data.error ?? 'unknown error'}`)
+  }
+
+  return data
+}
+
+registerTool(
+  {
+    name: 'slack_send_message',
+    description: 'Send a message to a Slack channel. Use channel name (e.g. "general") or channel ID.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        channel: { type: 'string', description: 'Channel name or ID (e.g. "general", "C0123456789")' },
+        text: { type: 'string', description: 'Message text to send' },
+        thread_ts: { type: 'string', description: 'Optional thread timestamp to reply in a thread' },
+      },
+      required: ['channel', 'text'],
+    },
+    category: 'web',
+  },
+  async (input: Record<string, unknown>): Promise<ToolCallResult> => {
+    const channel = input.channel as string
+    const text = input.text as string
+    const threadTs = input.thread_ts as string | undefined
+
+    try {
+      const body: Record<string, unknown> = { channel, text }
+      if (threadTs) body.thread_ts = threadTs
+
+      const data = await slackAPI('chat.postMessage', body)
+      const ts = (data.ts as string) ?? ''
+      const ch = (data.channel as string) ?? channel
+
+      return makeResult('slack_send_message', input, true, { channel: ch, ts }, `Message sent to ${ch}`)
+    } catch (error) {
+      return makeResult('slack_send_message', input, false, null, `Failed to send Slack message: ${stringifyError(error)}`)
+    }
+  }
+)
+
+registerTool(
+  {
+    name: 'slack_list_channels',
+    description: 'List Slack channels the bot has access to.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        limit: { type: 'number', description: 'Max channels to return (default 20)' },
+      },
+      required: [],
+    },
+    category: 'web',
+  },
+  async (input: Record<string, unknown>): Promise<ToolCallResult> => {
+    const limit = (input.limit as number) ?? 20
+
+    try {
+      const data = await slackAPI('conversations.list', {
+        types: 'public_channel,private_channel',
+        exclude_archived: true,
+        limit,
+      })
+
+      const channels = (data.channels as Array<{ id: string; name: string; is_member: boolean; num_members: number }>) ?? []
+      const list = channels.map(c => `#${c.name} (${c.id}) ${c.is_member ? '✓ joined' : '○ not joined'} — ${c.num_members} members`)
+      const display = list.length > 0 ? list.join('\n') : 'No channels found.'
+
+      return makeResult('slack_list_channels', input, true, channels, display)
+    } catch (error) {
+      return makeResult('slack_list_channels', input, false, null, `Failed to list channels: ${stringifyError(error)}`)
+    }
+  }
+)
+
+registerTool(
+  {
+    name: 'slack_read_messages',
+    description: 'Read recent messages from a Slack channel.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        channel: { type: 'string', description: 'Channel name or ID' },
+        limit: { type: 'number', description: 'Number of messages to fetch (default 10)' },
+      },
+      required: ['channel'],
+    },
+    category: 'web',
+  },
+  async (input: Record<string, unknown>): Promise<ToolCallResult> => {
+    const channel = input.channel as string
+    const limit = (input.limit as number) ?? 10
+
+    try {
+      const data = await slackAPI('conversations.history', { channel, limit })
+      const messages = (data.messages as Array<{ user?: string; text: string; ts: string }>) ?? []
+      const display = messages
+        .map(m => `[${m.user ?? 'bot'}] ${m.text.slice(0, 200)}`)
+        .join('\n')
+
+      return makeResult('slack_read_messages', input, true, messages, display || 'No messages found.')
+    } catch (error) {
+      return makeResult('slack_read_messages', input, false, null, `Failed to read messages: ${stringifyError(error)}`)
+    }
+  }
+)

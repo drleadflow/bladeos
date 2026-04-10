@@ -54,6 +54,9 @@ function makeLoopResult(overrides?: Partial<AgentLoopResult>): AgentLoopResult {
     turns: [],
     totalCost: 0,
     totalToolCalls: 0,
+    totalInputTokens: 0,
+    totalOutputTokens: 0,
+    durationMs: 0,
     stopReason: 'end_turn',
     ...overrides,
   }

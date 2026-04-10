@@ -97,11 +97,30 @@ export function createConversationEngine(
       // 2. Load history
       const history = engine.getHistory(conversationId)
 
-      // 3. Persist user message
-      try {
-        messages.create({ conversationId, role: 'user', content: request.message })
-      } catch { /* DB may not be initialized in tests */ }
+      // 3. Add user message to in-memory history for the model call.
+      // DB persistence is DEFERRED until after a successful model response (step 10).
+      // This prevents a death spiral: if the model returns a context-overflow error,
+      // persisting the message would make the context even larger on retry.
       history.push({ role: 'user', content: request.message })
+      let userMessagePersisted = false
+
+      // 3b. Truncate history if it's approaching context limits.
+      // Rough estimate: 1 token ≈ 4 chars. Most models have 128-200K context.
+      // Reserve 40K tokens for system prompt + response. Cap history at 80K tokens.
+      const MAX_HISTORY_CHARS = 80_000 * 4 // ~80K tokens
+      const totalChars = history.reduce((sum, m) => {
+        const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content)
+        return sum + content.length
+      }, 0)
+      if (totalChars > MAX_HISTORY_CHARS) {
+        logger.warn('ConversationEngine', `History too large (${Math.round(totalChars / 4000)}K tokens est). Truncating oldest messages.`)
+        while (history.length > 2 && history.reduce((s, m) => {
+          const c = typeof m.content === 'string' ? m.content : JSON.stringify(m.content)
+          return s + c.length
+        }, 0) > MAX_HISTORY_CHARS) {
+          history.shift()
+        }
+      }
 
       // 4. Build system prompt
       let systemPrompt = request.systemPromptOverride ?? ''
@@ -217,7 +236,17 @@ export function createConversationEngine(
         responseText = "I completed the requested actions. Let me know if you need anything else."
       }
 
-      // 10. Persist assistant message
+      // 10. Persist user message NOW (deferred from step 3 — only after model success).
+      // This prevents a death spiral where a failed model call leaves a persisted
+      // message that makes the context even larger on the next attempt.
+      if (!userMessagePersisted) {
+        try {
+          messages.create({ conversationId, role: 'user', content: request.message })
+          userMessagePersisted = true
+        } catch { /* DB may not be initialized */ }
+      }
+
+      // 10b. Persist assistant message
       const totalInputTokens = finalResult.turns.reduce((s, t) => s + t.response.inputTokens, 0)
       const totalOutputTokens = finalResult.turns.reduce((s, t) => s + t.response.outputTokens, 0)
       try {

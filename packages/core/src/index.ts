@@ -4,6 +4,7 @@ import './orchestration/builtin-workflows.js'
 
 // Core exports
 export { runAgentLoop } from './agent-loop.js'
+export { requiresApproval, requestApproval, waitForApproval } from './approval-checker.js'
 export { runConversationReply, extractBestResponseText } from './chat/reply.js'
 export { registerTool, getTool, getAllToolDefinitions, getToolsByCategory, executeTool, clearRegistry, createToolScope, createFilteredScope, registerScopedTool, getScopedToolDefinitions, destroyToolScope } from './tool-registry.js'
 export { callModel, streamModel, resolveModelConfig, resolveSmartModelConfig } from './model-provider.js'
@@ -97,6 +98,12 @@ export {
   detectEmotionalContext,
 } from './intelligence/index.js'
 export type { Prediction, EmotionalContext } from './intelligence/index.js'
+
+// Monitors
+export { setupBuiltinMonitors } from './monitors/index.js'
+export { startMonitorScheduler, runMonitorsNow, stopMonitorScheduler } from './monitors/index.js'
+export type { MonitorDefinition, MonitorCheckResult } from './monitors/index.js'
+export { measureAllKpis, registerMeasurement } from './monitors/index.js'
 
 // Execution API (v2 boundary)
 export { createExecutionAPI } from './execution-api.js'

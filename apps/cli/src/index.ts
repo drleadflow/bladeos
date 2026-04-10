@@ -362,6 +362,30 @@ program
     })
   })
 
+program
+  .command('slack')
+  .description('Start the Slack bot integration (Socket Mode)')
+  .action(async () => {
+    if (!process.env.SLACK_ACCESS_TOKEN) {
+      console.error('❌ SLACK_ACCESS_TOKEN is required. Add your xoxb- bot token to .env.')
+      process.exit(1)
+    }
+    if (!process.env.SLACK_APP_TOKEN) {
+      console.error('❌ SLACK_APP_TOKEN is required. Enable Socket Mode in your Slack app and generate an xapp- token.')
+      process.exit(1)
+    }
+
+    const { startSlackBot } = await import('@blade/conversation')
+    await startSlackBot()
+
+    console.log('\n⚔️  Blade Slack Bot')
+    console.log('   Slack bot running (Socket Mode). @mention the bot or DM it.')
+    console.log('   Press Ctrl+C to stop.\n')
+
+    process.on('SIGINT', () => { console.log('\nSlack bot stopped.'); process.exit(0) })
+    process.on('SIGTERM', () => { console.log('\nSlack bot stopped.'); process.exit(0) })
+  })
+
 // ============================================================
 // TEAM COMMAND
 // ============================================================

@@ -43,14 +43,15 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@blade/shared": "*",
+    "@anthropic-ai/sdk": "^0.52.0",
     "@blade/db": "*",
     "@blade/docker-runner": "*",
-    "@anthropic-ai/sdk": "^0.52.0",
+    "@blade/shared": "*",
+    "@slack/bolt": "^4.7.0",
     "js-yaml": "^4.1.0",
+    "livekit-server-sdk": "^2.9.1",
     "node-cron": "^3.0.3",
     "node-telegram-bot-api": "^0.66.0",
-    "livekit-server-sdk": "^2.9.1",
     "openai": "^4.80.0"
   },
   "devDependencies": {

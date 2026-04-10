@@ -10,15 +10,66 @@ import type {
   StopReason,
   ModelConfig,
 } from './types.js'
-import { callModel, streamModel, resolveModelConfig } from './model-provider.js'
+import { callModel, streamModel, resolveModelConfig, resolveSmartModelConfigChain } from './model-provider.js'
 import { executeTool } from './tool-registry.js'
 import { calculateCost, isWithinBudget } from './cost-tracker.js'
+import { requiresApproval, requestApproval, waitForApproval } from './approval-checker.js'
 import { logger } from '@blade/shared'
 
 const DEFAULT_MAX_ITERATIONS = 25
 const MAX_MODEL_RETRIES = 2
 const RETRY_DELAYS_MS = [1000, 3000]
 const STUCK_LOOP_THRESHOLD = 3
+const DEFAULT_MAX_WALL_CLOCK_MS = 600_000 // 10 minutes
+const DEFAULT_TOOL_TIMEOUT_MS = 120_000   // 2 minutes per tool
+
+// ============================================================
+// ERROR CLASSIFICATION (inspired by Hermes agent/error_classifier.py)
+// ============================================================
+
+type ErrorCategory = 'auth' | 'rate_limit' | 'context_overflow' | 'timeout' | 'server_error' | 'model_not_found' | 'unknown'
+
+interface ClassifiedError {
+  category: ErrorCategory
+  retryable: boolean
+  retryDelayMs?: number
+  message: string
+}
+
+function classifyError(err: Error): ClassifiedError {
+  const msg = err.message.toLowerCase()
+
+  if (msg.includes('401') || msg.includes('unauthorized') || msg.includes('invalid api key') || msg.includes('authentication')) {
+    return { category: 'auth', retryable: false, message: err.message }
+  }
+
+  if (msg.includes('429') || msg.includes('rate limit') || msg.includes('too many requests')) {
+    const retryAfterMatch = msg.match(/retry.after[:\s]*(\d+)/i)
+    const retryDelayMs = retryAfterMatch ? parseInt(retryAfterMatch[1], 10) * 1000 : 10_000
+    return { category: 'rate_limit', retryable: true, retryDelayMs, message: err.message }
+  }
+
+  if (msg.includes('context') && (msg.includes('too long') || msg.includes('overflow') || msg.includes('exceed'))
+    || msg.includes('maximum context length')
+    || (msg.includes('400') && (msg.includes('too many tokens') || msg.includes('max_tokens')))) {
+    return { category: 'context_overflow', retryable: false, message: err.message }
+  }
+
+  if (msg.includes('model not found') || msg.includes('not a valid model') || msg.includes('404') || msg.includes('does not exist')) {
+    return { category: 'model_not_found', retryable: false, message: err.message }
+  }
+
+  if (msg.includes('timeout') || msg.includes('etimedout') || msg.includes('econnreset') || msg.includes('socket hang up')) {
+    return { category: 'timeout', retryable: true, retryDelayMs: 2000, message: err.message }
+  }
+
+  if (msg.includes('500') || msg.includes('502') || msg.includes('503') || msg.includes('504')
+    || msg.includes('internal server error') || msg.includes('bad gateway') || msg.includes('overloaded')) {
+    return { category: 'server_error', retryable: true, message: err.message }
+  }
+
+  return { category: 'unknown', retryable: true, message: err.message }
+}
 
 function extractText(content: ContentBlock[]): string {
   return content
@@ -59,6 +110,20 @@ function isStuckLoop(
   return recent.every(h => h.name === first.name && h.input === first.input)
 }
 
+/** Wrap a promise with a timeout. Rejects with a descriptive error on timeout. */
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${Math.round(ms / 1000)}s`))
+    }, ms)
+
+    promise.then(
+      (val) => { clearTimeout(timer); resolve(val) },
+      (err) => { clearTimeout(timer); reject(err) },
+    )
+  })
+}
+
 export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoopResult> {
   const {
     systemPrompt,
@@ -66,6 +131,8 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
     context,
     maxIterations = DEFAULT_MAX_ITERATIONS,
     costBudget = context.costBudget ?? 0,
+    maxWallClockMs = DEFAULT_MAX_WALL_CLOCK_MS,
+    toolTimeoutMs = DEFAULT_TOOL_TIMEOUT_MS,
     streaming = false,
     onTurn,
     onToolCall,
@@ -74,7 +141,14 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
     onError,
   } = options
 
-  const modelConfig: ModelConfig = context.modelConfig ?? resolveModelConfig(context.modelId)
+  const loopStartTime = performance.now()
+  const deadline = Date.now() + maxWallClockMs
+
+  // Build provider fallback chain: primary config + alternatives
+  const fallbackChain: ModelConfig[] = context.modelConfig
+    ? [context.modelConfig]
+    : resolveSmartModelConfigChain('standard', { needsToolCalling: true })
+  let modelConfig: ModelConfig = fallbackChain[0] ?? resolveModelConfig(context.modelId)
 
   if (!modelConfig.apiKey) {
     throw new Error(`No API key configured for provider "${modelConfig.provider}". Set the appropriate environment variable.`)
@@ -85,12 +159,22 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
   const turns: AgentTurn[] = []
   let totalCost = 0
   let totalToolCalls = 0
+  let totalInputTokens = 0
+  let totalOutputTokens = 0
   let stopReason: StopReason = 'end_turn'
 
   // Track tool call history for stuck-loop detection
   const toolCallHistory: Array<{ name: string; input: string }> = []
 
   for (let iteration = 0; iteration < maxIterations; iteration++) {
+    // Wall-clock deadline check
+    if (Date.now() >= deadline) {
+      logger.warn('AgentLoop', `Wall-clock timeout reached (${Math.round(maxWallClockMs / 1000)}s)`)
+      onError?.(new Error(`Agent loop timed out after ${Math.round(maxWallClockMs / 1000)}s`), 'wall_clock_timeout')
+      stopReason = 'timeout'
+      break
+    }
+
     // Cost gate
     if (!isWithinBudget(totalCost, costBudget)) {
       logger.warn('AgentLoop', `Cost budget exceeded: $${totalCost.toFixed(4)} >= $${costBudget}`)
@@ -98,12 +182,12 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
       break
     }
 
-    logger.debug('AgentLoop', `Iteration ${iteration + 1}/${maxIterations}`)
+    logger.debug('AgentLoop', `Iteration ${iteration + 1}/${maxIterations} | tokens: ${totalInputTokens}in/${totalOutputTokens}out | cost: $${totalCost.toFixed(4)}`)
 
     // Determine if we can use streaming for this provider
     const canStream = streaming && modelConfig.provider !== 'claude-cli'
 
-    // Call model with retry logic (up to MAX_MODEL_RETRIES retries with exponential backoff)
+    // Call model with classified error handling and retry logic
     let response
     let modelCallSucceeded = false
 
@@ -128,17 +212,57 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
         break
       } catch (err) {
         const error = err instanceof Error ? err : new Error(String(err))
+        const classified = classifyError(error)
         const isLastAttempt = attempt === MAX_MODEL_RETRIES
 
+        if (!classified.retryable) {
+          logger.error('AgentLoop', `Model call failed (${classified.category}, non-retryable): ${error.message}`)
+          onError?.(error, `model_call_${classified.category}`)
+          stopReason = 'error'
+          break
+        }
+
         if (isLastAttempt) {
-          logger.error('AgentLoop', `Model call failed after ${MAX_MODEL_RETRIES + 1} attempts: ${error.message}`)
+          logger.error('AgentLoop', `Model call failed after ${MAX_MODEL_RETRIES + 1} attempts (${classified.category}): ${error.message}`)
           onError?.(error, `model_call_failed_after_retries`)
           stopReason = 'error'
         } else {
-          const delayMs = RETRY_DELAYS_MS[attempt] ?? 3000
-          logger.warn('AgentLoop', `Model call attempt ${attempt + 1} failed: ${error.message}. Retrying in ${delayMs}ms...`)
-          onError?.(error, `model_call_retry_${attempt + 1}`)
+          const delayMs = classified.retryDelayMs ?? RETRY_DELAYS_MS[attempt] ?? 3000
+          logger.warn('AgentLoop', `Model call attempt ${attempt + 1} failed (${classified.category}): ${error.message}. Retrying in ${delayMs}ms...`)
+          onError?.(error, `model_call_retry_${attempt + 1}_${classified.category}`)
           await sleep(delayMs)
+        }
+      }
+    }
+
+    // Provider fallback: if primary failed all retries, try next provider in chain
+    if (!modelCallSucceeded && fallbackChain.length > 1) {
+      for (let fi = 1; fi < fallbackChain.length; fi++) {
+        const fallbackConfig = fallbackChain[fi]
+        if (!fallbackConfig.apiKey) continue
+        logger.warn('AgentLoop', `Primary provider "${modelConfig.provider}" failed. Falling back to "${fallbackConfig.provider}" (${fallbackConfig.modelId})`)
+        onError?.(new Error(`Falling back to ${fallbackConfig.provider}`), 'provider_fallback')
+
+        try {
+          const canFallbackStream = streaming && fallbackConfig.provider !== 'claude-cli'
+          if (canFallbackStream) {
+            for await (const event of streamModel(fallbackConfig, systemPrompt, messages, tools)) {
+              if (event.type === 'text_delta') onTextDelta?.(event.text)
+              if (event.type === 'message_done') response = event.response
+            }
+            if (!response) throw new Error('Fallback stream ended without message_done')
+          } else {
+            response = await callModel(fallbackConfig, systemPrompt, messages, tools)
+          }
+          modelConfig = fallbackConfig
+          modelCallSucceeded = true
+          stopReason = 'end_turn'
+          logger.info('AgentLoop', `Fallback to "${fallbackConfig.provider}" succeeded`)
+          break
+        } catch (fallbackErr) {
+          const fbError = fallbackErr instanceof Error ? fallbackErr : new Error(String(fallbackErr))
+          logger.error('AgentLoop', `Fallback to "${fallbackConfig.provider}" also failed: ${fbError.message}`)
+          onError?.(fbError, `fallback_${fallbackConfig.provider}_failed`)
         }
       }
     }
@@ -147,14 +271,13 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
       break
     }
 
+    // Track tokens
+    totalInputTokens += response!.inputTokens
+    totalOutputTokens += response!.outputTokens
+
     // Track cost
     const cost = calculateCost(response!.model, response!.inputTokens, response!.outputTokens)
     totalCost += cost.totalCostUsd
-
-    // NOTE: Cost is NOT persisted to DB here. The caller (ConversationEngine,
-    // coding pipeline, workflow runner) is the single cost-recording authority.
-    // This avoids double-counting. The in-memory totalCost accumulator above
-    // is used only for budget gating within this loop.
 
     // Check if model wants to use tools
     const toolUseBlocks = extractToolUseBlocks(response!.content)
@@ -162,7 +285,6 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
     if (toolUseBlocks.length === 0) {
       const finalText = extractText(response!.content)
 
-      // No tools — final response
       const turn: AgentTurn = {
         iteration,
         response: {
@@ -177,7 +299,6 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
       }
       turns.push(turn)
       if (finalText && !canStream) {
-        // Only emit bulk text when not streaming — streaming already fired onTextDelta per chunk
         onTextDelta?.(finalText)
       }
       onTurn?.(turn)
@@ -196,7 +317,6 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
       const stuckError = new Error(`Agent stuck in loop: "${lastCall.name}" called ${STUCK_LOOP_THRESHOLD}+ times with same input`)
       onError?.(stuckError, 'stuck_loop_detected')
 
-      // Inject a message telling the model to try a different approach
       messages.push({ role: 'assistant', content: response!.content })
       messages.push({
         role: 'user',
@@ -207,25 +327,83 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
           is_error: true,
         }],
       })
-      // Continue to next iteration instead of breaking — give the model a chance to recover
       continue
     }
 
-    // Execute each tool call, catching errors per-tool instead of crashing the loop
+    // Execute each tool call with per-tool timeout
     const toolResults: ContentBlockToolResult[] = []
     const turnToolCalls: ToolCallResult[] = []
 
     for (const block of toolUseBlocks) {
+      // Check deadline before each tool call
+      if (Date.now() >= deadline) {
+        logger.warn('AgentLoop', `Wall-clock timeout reached during tool execution`)
+        stopReason = 'timeout'
+        break
+      }
+
       logger.info('AgentLoop', `Tool call: ${block.name}`, block.input)
+
+      // Approval gate: check if this tool needs human approval before execution
+      if (requiresApproval(block.name, block.input)) {
+        logger.info('AgentLoop', `Tool "${block.name}" requires approval — requesting...`)
+        onError?.(new Error(`Approval required for "${block.name}"`), `approval_requested_${block.name}`)
+
+        try {
+          const approvalId = requestApproval({
+            toolName: block.name,
+            toolInput: block.input,
+            userId: context.userId,
+            conversationId: context.conversationId,
+          })
+
+          const { approved, decidedBy } = await waitForApproval(approvalId, Math.min(toolTimeoutMs, 300_000))
+
+          if (!approved) {
+            logger.info('AgentLoop', `Tool "${block.name}" was ${decidedBy === 'system-timeout' ? 'timed out' : 'rejected'}`)
+            const rejectionResult: ToolCallResult = {
+              toolUseId: block.id,
+              toolName: block.name,
+              input: block.input,
+              success: false,
+              data: null,
+              display: decidedBy === 'system-timeout'
+                ? `Tool "${block.name}" approval timed out. The operator did not respond in time. Try a different approach or ask the user to approve.`
+                : `Tool "${block.name}" was rejected by ${decidedBy ?? 'the operator'}. Do not retry this action — try a different approach.`,
+              durationMs: 0,
+              timestamp: new Date().toISOString(),
+            }
+            totalToolCalls++
+            onToolCall?.(rejectionResult)
+            turnToolCalls.push(rejectionResult)
+            toolResults.push({
+              type: 'tool_result',
+              tool_use_id: block.id,
+              content: `Error: ${rejectionResult.display}`,
+              is_error: true,
+            })
+            continue
+          }
+
+          logger.info('AgentLoop', `Tool "${block.name}" approved by ${decidedBy ?? 'operator'}`)
+        } catch (approvalErr) {
+          // If approval system fails, log and proceed (fail open for now)
+          logger.warn('AgentLoop', `Approval check failed for "${block.name}", proceeding: ${approvalErr instanceof Error ? approvalErr.message : String(approvalErr)}`)
+        }
+      }
 
       let result: ToolCallResult
       try {
-        result = await executeTool(block.name, block.id, block.input, context)
+        result = await withTimeout(
+          executeTool(block.name, block.id, block.input, context),
+          toolTimeoutMs,
+          `Tool "${block.name}"`,
+        )
       } catch (err) {
-        // Catch unexpected errors from tool execution that bypass executeTool's own error handling
         const error = err instanceof Error ? err : new Error(String(err))
-        logger.error('AgentLoop', `Unexpected tool error in "${block.name}": ${error.message}`)
-        onError?.(error, `tool_crash_${block.name}`)
+        const isTimeout = error.message.includes('timed out')
+        logger.error('AgentLoop', `${isTimeout ? 'Tool timeout' : 'Unexpected tool error'} in "${block.name}": ${error.message}`)
+        onError?.(error, isTimeout ? `tool_timeout_${block.name}` : `tool_crash_${block.name}`)
 
         result = {
           toolUseId: block.id,
@@ -233,8 +411,10 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
           input: block.input,
           success: false,
           data: null,
-          display: `Tool "${block.name}" crashed: ${error.message}`,
-          durationMs: 0,
+          display: isTimeout
+            ? `Tool "${block.name}" timed out after ${Math.round(toolTimeoutMs / 1000)}s. Try a simpler approach or break the operation into smaller steps.`
+            : `Tool "${block.name}" crashed: ${error.message}`,
+          durationMs: isTimeout ? toolTimeoutMs : 0,
           timestamp: new Date().toISOString(),
         }
       }
@@ -249,6 +429,11 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
         content: result.success ? (result.display || JSON.stringify(result.data)) : `Error: ${result.display}`,
         is_error: !result.success,
       })
+    }
+
+    // If we timed out during tool execution, break
+    if (stopReason === 'timeout') {
+      break
     }
 
     // Build turn record
@@ -271,19 +456,22 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
     messages.push({ role: 'assistant', content: response!.content })
     messages.push({ role: 'user', content: toolResults })
 
-    // If we've hit max iterations on next loop, mark it
     if (iteration === maxIterations - 1) {
       stopReason = 'max_iterations'
     }
   }
 
   const finalResponse = extractLatestTextFromTurns(turns)
+  const durationMs = Math.round(performance.now() - loopStartTime)
 
   const result: AgentLoopResult = {
     finalResponse,
     turns,
     totalCost,
     totalToolCalls,
+    totalInputTokens,
+    totalOutputTokens,
+    durationMs,
     stopReason,
   }
 
@@ -298,7 +486,6 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
     }
   } catch { /* gamification not initialized */ }
 
-  // Check achievements after awarding XP
   try {
     const { checkAchievements } = await import('./gamification/index.js')
     checkAchievements()

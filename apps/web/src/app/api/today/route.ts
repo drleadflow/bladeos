@@ -1,13 +1,14 @@
-import { initializeDb, activityEvents, approvals, monitorAlerts, costEntries, employees } from '@blade/db'
+import { activityEvents, approvals, monitorAlerts, costEntries, employees, jobEvals } from '@blade/db'
 import { logger } from '@blade/shared'
 import { requireAuth, unauthorizedResponse } from '@/lib/auth'
+import { ensureServerInit } from '@/lib/server-init'
 
 export async function GET(request: Request): Promise<Response> {
   const auth = requireAuth(request)
   if (!auth.authorized) return unauthorizedResponse(auth.error ?? 'Unauthorized')
 
   try {
-    initializeDb()
+    ensureServerInit()
 
     const todayStart = new Date()
     todayStart.setHours(0, 0, 0, 0)
@@ -42,6 +43,30 @@ export async function GET(request: Request): Promise<Response> {
     const warningAlertCount = alerts.filter((alert) => ['warning', 'high'].includes(alert.severity)).length
     const topAlert = alerts[0] ?? null
 
+    // Agent eval success rate (last 30 days)
+    let evalSummary = { totalJobs: 0, passed: 0, failed: 0, partial: 0, successRatePct: 0, avgCostUsd: 0, avgDurationSec: 0, avgToolCalls: 0, avgFixCycles: 0 }
+    try {
+      evalSummary = jobEvals.successRate({ days: 30 })
+    } catch { /* job_evals table may not exist yet */ }
+
+    // Active workers (running jobs right now)
+    let activeWorkerCount = 0
+    try {
+      const { getDb } = await import('@blade/db')
+      const db = getDb()
+      const row = db.prepare("SELECT COUNT(*) as count FROM worker_sessions WHERE status IN ('active', 'booting')").get() as { count: number } | undefined
+      activeWorkerCount = row?.count ?? 0
+    } catch { /* worker_sessions table may not exist */ }
+
+    // System health score (0-100 based on alerts + eval rate + cost)
+    const healthFactors = {
+      noAlerts: criticalAlertCount === 0 ? 30 : (warningAlertCount === 0 ? 15 : 0),
+      evalRate: Math.min(30, Math.round(evalSummary.successRatePct * 0.3)),
+      costOk: todayCost.totalUsd < 10 ? 20 : (todayCost.totalUsd < 50 ? 10 : 0),
+      hasAgents: activeAgents.length > 0 ? 20 : 0,
+    }
+    const systemHealth = Math.min(100, Object.values(healthFactors).reduce((a, b) => a + b, 0))
+
     return Response.json({
       success: true,
       data: {
@@ -54,6 +79,9 @@ export async function GET(request: Request): Promise<Response> {
         todayCost,
         activeAgents,
         todayEventCount,
+        evalSummary,
+        activeWorkerCount,
+        systemHealth,
       },
     })
   } catch (error: unknown) {

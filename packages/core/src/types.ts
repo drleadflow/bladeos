@@ -83,6 +83,7 @@ export type StopReason =
   | 'tool_use'
   | 'max_iterations'
   | 'cost_limit'
+  | 'timeout'
   | 'error'
 
 export interface ContentBlockText {
@@ -134,6 +135,10 @@ export interface AgentLoopOptions {
   context: ExecutionContext
   maxIterations?: number
   costBudget?: number
+  /** Maximum wall-clock time for the entire loop in milliseconds (default: 600_000 = 10 min) */
+  maxWallClockMs?: number
+  /** Maximum time per individual tool execution in milliseconds (default: 120_000 = 2 min) */
+  toolTimeoutMs?: number
   streaming?: boolean
   onTurn?: (turn: AgentTurn) => void
   onToolCall?: (result: ToolCallResult) => void
@@ -147,6 +152,9 @@ export interface AgentLoopResult {
   turns: AgentTurn[]
   totalCost: number
   totalToolCalls: number
+  totalInputTokens: number
+  totalOutputTokens: number
+  durationMs: number
   stopReason: StopReason
 }
 
