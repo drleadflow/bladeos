@@ -2,12 +2,6 @@ import { NextRequest, NextResponse } from 'next/server'
 import Database from 'better-sqlite3'
 import path from 'path'
 import { callTool } from '@/lib/ghl-mcp-client'
-import { classifyConversation } from '@/lib/conversation-classifier'
-
-interface GHLInternalFetchOptions {
-  token: string
-  locationId: string
-}
 
 async function getFirebaseToken(): Promise<string | null> {
   const refreshToken = process.env.GHL_FIREBASE_REFRESH_TOKEN
@@ -141,7 +135,7 @@ export async function GET(request: NextRequest) {
     }
 
     // 2. Get pipeline stage names
-    let stageNames: Record<string, string> = {}
+    const stageNames: Record<string, string> = {}
     try {
       const pipResult = await callTool('ghl_get_pipeline', { pipelineId, locationId: accountId })
       const pipData = pipResult.parsed as { stages?: Array<{ id: string; name: string }> }
