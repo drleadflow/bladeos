@@ -162,7 +162,7 @@ export interface AgentLoopResult {
 // MODEL PROVIDER
 // ============================================================
 
-export type ModelProvider = 'anthropic' | 'openai' | 'openrouter' | 'claude-cli'
+export type ModelProvider = 'anthropic' | 'openai' | 'openrouter' | 'claude-cli' | 'gemini-cli'
 
 export interface ModelConfig {
   provider: ModelProvider

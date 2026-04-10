@@ -258,6 +258,10 @@ export async function callModel(
   tools: ToolDefinition[],
   maxTokens?: number
 ): Promise<ModelResponse> {
+  if (config.provider === 'gemini-cli') {
+    return callGeminiCli(systemPrompt, messages, tools, maxTokens)
+  }
+
   if (config.provider === 'claude-cli') {
     return callClaudeCli(systemPrompt, messages, tools, maxTokens)
   }
@@ -282,7 +286,7 @@ export async function callModel(
     return callOpenAI(config, systemPrompt, messages, tools, maxTokens)
   }
 
-  throw new Error(`Provider "${config.provider}" not yet supported. Use "anthropic", "openai", "openrouter", or "claude-cli".`)
+  throw new Error(`Provider "${config.provider}" not yet supported. Use "anthropic", "openai", "openrouter", "claude-cli", or "gemini-cli".`)
 }
 
 // ============================================================
@@ -576,10 +580,176 @@ async function callClaudeCli(
 }
 
 // ============================================================
+// GEMINI CLI PROVIDER (1M context window for large codebase analysis)
+// ============================================================
+
+async function callGeminiCli(
+  systemPrompt: string,
+  messages: AgentMessage[],
+  tools: ToolDefinition[],
+  _maxTokens?: number
+): Promise<ModelResponse> {
+  const writeFileSync = nodeWriteFileSync
+  const unlinkSync = nodeUnlinkSync
+  const mkdtempSync = nodeMkdtempSync
+  const join = nodeJoin
+  const tmpdir = nodeTmpdir
+
+  // Build the user prompt from messages
+  const parts: string[] = []
+  for (const msg of messages) {
+    if (typeof msg.content === 'string') {
+      parts.push(msg.content)
+    } else {
+      for (const block of msg.content) {
+        if (block.type === 'text') {
+          parts.push((block as { type: 'text'; text: string }).text)
+        } else if (block.type === 'tool_result') {
+          const tr = block as { type: 'tool_result'; tool_use_id: string; content: string }
+          parts.push(`[Tool result]: ${tr.content}`)
+        }
+      }
+    }
+  }
+
+  // Prepend system prompt to user prompt (Gemini CLI uses GEMINI.md for system context,
+  // but for programmatic use we inject it inline)
+  let fullPrompt = ''
+  if (systemPrompt) {
+    fullPrompt += `<system>\n${systemPrompt}\n</system>\n\n`
+  }
+
+  // Inject tool descriptions if any
+  if (tools.length > 0) {
+    fullPrompt += '## Available Tools\n'
+    fullPrompt += 'You have these tools available. To use a tool, respond ONLY with a JSON block like: {"tool": "tool_name", "input": {...}}\n\n'
+    for (const tool of tools) {
+      fullPrompt += `### ${tool.name}\n${tool.description}\nParameters: ${JSON.stringify(tool.input_schema.properties)}\n\n`
+    }
+  }
+
+  fullPrompt += parts.join('\n\n')
+
+  // Write prompt to temp file to handle large payloads
+  const tmpDir = mkdtempSync(join(tmpdir(), 'blade-gemini-'))
+  const promptFile = join(tmpDir, 'prompt.txt')
+  writeFileSync(promptFile, fullPrompt, 'utf-8')
+
+  logger.debug('ModelProvider', `Calling Gemini CLI with ${messages.length} messages and ${tools.length} tools`)
+
+  try {
+    // Resolve gemini CLI path
+    let geminiPath = 'gemini'
+    try {
+      geminiPath = nodeExecSync('which gemini', { encoding: 'utf-8', timeout: 5000 }).trim() || 'gemini'
+    } catch { /* use default */ }
+
+    const cliEnv = { ...process.env }
+    // Ensure GEMINI_API_KEY is set
+    if (!cliEnv.GEMINI_API_KEY) {
+      throw new Error('GEMINI_API_KEY not configured. Set it in your .env file.')
+    }
+
+    const spawnResult = nodeSpawnSync(geminiPath, [
+      '-p',
+      fullPrompt,
+      '--output-format', 'json',
+    ], {
+      encoding: 'utf-8',
+      timeout: 180_000, // 3 min — Gemini handles large contexts
+      maxBuffer: 20 * 1024 * 1024, // 20MB — large context responses
+      env: cliEnv,
+    })
+
+    if (spawnResult.error) {
+      throw spawnResult.error
+    }
+
+    const rawOutput = spawnResult.stdout
+
+    // Clean up temp files
+    try { unlinkSync(promptFile) } catch { /* ignore */ }
+
+    // Parse JSON response from Gemini CLI
+    let resultText = ''
+    let inputTokens = 0
+    let outputTokens = 0
+    let modelName = 'gemini-2.5-flash'
+
+    try {
+      const parsed = JSON.parse(rawOutput.trim())
+      // Gemini CLI JSON format: { response: string, stats: { models: { ... } } }
+      resultText = parsed.result ?? parsed.response ?? parsed.text ?? ''
+
+      // Extract token usage from stats.models
+      if (parsed.stats?.models) {
+        const modelEntries = Object.entries(parsed.stats.models) as [string, { tokens?: { prompt?: number; candidates?: number } }][]
+        for (const [name, data] of modelEntries) {
+          modelName = name
+          if (data.tokens) {
+            inputTokens += data.tokens.prompt ?? 0
+            outputTokens += data.tokens.candidates ?? 0
+          }
+        }
+      }
+
+      // Fallback: direct usage field
+      if (inputTokens === 0 && parsed.usage) {
+        inputTokens = parsed.usage.input_tokens ?? parsed.usage.promptTokenCount ?? 0
+        outputTokens = parsed.usage.output_tokens ?? parsed.usage.candidatesTokenCount ?? 0
+      }
+      if (parsed.model) {
+        modelName = parsed.model
+      }
+    } catch {
+      // If JSON parse fails, treat raw output as text response
+      resultText = rawOutput.trim()
+    }
+
+    const content: ContentBlock[] = []
+
+    // Check if the response contains a tool call JSON
+    const toolCallMatch = resultText.match(/\{"tool":\s*"([^"]+)",\s*"input":\s*(\{[\s\S]*?\})\s*\}/)
+    if (toolCallMatch) {
+      const textBefore = resultText.slice(0, toolCallMatch.index).trim()
+      if (textBefore) {
+        content.push({ type: 'text' as const, text: textBefore })
+      }
+      try {
+        content.push({
+          type: 'tool_use' as const,
+          id: `gemini-${crypto.randomUUID().slice(0, 8)}`,
+          name: toolCallMatch[1],
+          input: JSON.parse(toolCallMatch[2]),
+        })
+      } catch {
+        content.push({ type: 'text' as const, text: resultText })
+      }
+    } else {
+      content.push({ type: 'text' as const, text: resultText })
+    }
+
+    return {
+      content,
+      model: modelName,
+      inputTokens,
+      outputTokens,
+      stopReason: 'end_turn',
+    }
+  } catch (err) {
+    // Clean up on error
+    try { unlinkSync(promptFile) } catch { /* ignore */ }
+    const stderr = (err as { stderr?: string }).stderr ?? ''
+    const message = err instanceof Error ? err.message : String(err)
+    throw new Error(`Gemini CLI failed: ${stderr || message}`)
+  }
+}
+
+// ============================================================
 // SMART MODEL ROUTING
 // ============================================================
 
-export type TaskComplexity = 'light' | 'standard' | 'heavy'
+export type TaskComplexity = 'light' | 'standard' | 'heavy' | 'large-context'
 
 /**
  * Resolve the best model config based on task complexity.
@@ -599,6 +769,16 @@ export function resolveSmartModelConfig(
   const hasOpenAI = !!process.env.OPENAI_API_KEY
   const hasClaudeCli = (process.env.ANTHROPIC_API_KEY ?? '').startsWith('sk-ant-oat01-')
   const hasAnthropicApi = !!(process.env.ANTHROPIC_API_KEY) && !hasClaudeCli
+  const hasGemini = !!process.env.GEMINI_API_KEY
+
+  // Large-context tasks: route to Gemini CLI (1M token context window)
+  if (complexity === 'large-context' && hasGemini) {
+    return {
+      provider: 'gemini-cli',
+      modelId: 'gemini-2.5-flash',
+      apiKey: process.env.GEMINI_API_KEY!,
+    }
+  }
 
   // When tool calling is required, NEVER use claude-cli (it can't do native tool-use).
   // Prefer providers with native API tool support in order:
@@ -760,6 +940,14 @@ export function resolveModelConfig(modelId?: string): ModelConfig {
       provider: 'openai',
       modelId: id,
       apiKey: process.env.OPENAI_API_KEY ?? '',
+    }
+  }
+
+  if (id.startsWith('gemini-')) {
+    return {
+      provider: 'gemini-cli',
+      modelId: id,
+      apiKey: process.env.GEMINI_API_KEY ?? '',
     }
   }
 
