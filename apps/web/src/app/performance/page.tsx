@@ -147,6 +147,32 @@ function EfficiencyCard({
 
 // ── Main page ────────────────────────────────────────────────
 
+interface PipelineOption {
+  id: string
+  name: string
+  stageCount: number
+}
+
+interface PipelineAnalysis {
+  pipelineId: string
+  pipelineName: string
+  totalOpportunities: number
+  stageBreakdown: Array<{ stage: string; count: number; pct: number }>
+  introResponseRate: number
+  introResponseCount: number
+  followupResponseRate: number
+  followupResponseCount: number
+  neverRepliedRate: number
+  neverRepliedCount: number
+  sampled: number
+  topIntros: Array<{
+    name: string
+    intro: string
+    gotResponse: boolean
+    reply: string
+  }>
+}
+
 export default function PerformancePage() {
   const [accounts, setAccounts] = useState<Account[]>([])
   const [selectedAccount, setSelectedAccount] = useState<string>('')
@@ -157,6 +183,54 @@ export default function PerformancePage() {
   const [cached, setCached] = useState(false)
   const [syncedAt, setSyncedAt] = useState<string | null>(null)
   const [syncing, setSyncing] = useState(false)
+
+  // Pipeline state
+  const [pipelines, setPipelines] = useState<PipelineOption[]>([])
+  const [selectedPipeline, setSelectedPipeline] = useState<string>('')
+  const [pipelineData, setPipelineData] = useState<PipelineAnalysis | null>(null)
+  const [pipelineLoading, setPipelineLoading] = useState(false)
+
+  // Fetch pipelines when account changes
+  useEffect(() => {
+    if (!selectedAccount) return
+    setPipelines([])
+    setSelectedPipeline('')
+    setPipelineData(null)
+    async function loadPipelines() {
+      try {
+        const res = await fetch(`/api/performance/pipelines?accountId=${selectedAccount}`)
+        const json = await res.json()
+        if (json.success && json.data) {
+          setPipelines(json.data)
+        }
+      } catch { /* ignore */ }
+    }
+    loadPipelines()
+  }, [selectedAccount])
+
+  // Fetch pipeline analysis when pipeline is selected
+  useEffect(() => {
+    if (!selectedAccount || !selectedPipeline) {
+      setPipelineData(null)
+      return
+    }
+    let cancelled = false
+    async function loadPipelineData() {
+      setPipelineLoading(true)
+      try {
+        const res = await fetch(
+          `/api/performance/pipeline?accountId=${selectedAccount}&pipelineId=${selectedPipeline}`
+        )
+        const json = await res.json()
+        if (!cancelled && json.success) {
+          setPipelineData(json.data)
+        }
+      } catch { /* ignore */ }
+      finally { if (!cancelled) setPipelineLoading(false) }
+    }
+    loadPipelineData()
+    return () => { cancelled = true }
+  }, [selectedAccount, selectedPipeline])
 
   // Fetch accounts on mount
   useEffect(() => {
@@ -287,6 +361,22 @@ export default function PerformancePage() {
             </button>
           ))}
         </div>
+
+        {/* Pipeline picker */}
+        {pipelines.length > 0 && (
+          <select
+            value={selectedPipeline}
+            onChange={(e) => setSelectedPipeline(e.target.value)}
+            className="rounded-full border border-white/10 bg-white/[0.06] px-4 py-2 text-sm text-zinc-200 backdrop-blur-xl transition-colors hover:border-white/20 focus:border-cyan-400/40 focus:outline-none"
+          >
+            <option value="" className="bg-zinc-900">All Conversations</option>
+            {pipelines.map((p) => (
+              <option key={p.id} value={p.id} className="bg-zinc-900">
+                {p.name}
+              </option>
+            ))}
+          </select>
+        )}
 
         {/* AI Setter badge */}
         <Badge tone="cyan">AI Setter</Badge>
@@ -559,6 +649,133 @@ export default function PerformancePage() {
             </div>
           )}
         </>
+      )}
+
+      {/* ── Pipeline Analysis ────────────────────────────── */}
+      {selectedPipeline && pipelineLoading && (
+        <div className="mt-6 rounded-[1.75rem] border border-white/10 bg-white/[0.04] p-6">
+          <div className="flex items-center gap-3">
+            <div className="h-6 w-6 animate-spin rounded-full border-2 border-cyan-400 border-t-transparent" />
+            <p className="text-sm text-zinc-400">Analyzing pipeline conversations...</p>
+          </div>
+        </div>
+      )}
+
+      {selectedPipeline && !pipelineLoading && pipelineData && (
+        <div className="mt-6 space-y-4">
+          <div className="rounded-[1.75rem] border border-cyan-400/20 bg-cyan-400/[0.03] p-6">
+            <div className="mb-5">
+              <p className="text-[11px] font-medium uppercase tracking-[0.22em] text-cyan-300/80">
+                Pipeline Analysis
+              </p>
+              <h2 className="mt-1 text-lg font-semibold text-zinc-100">
+                {pipelineData.pipelineName}
+              </h2>
+              <p className="mt-1 text-sm text-zinc-400">
+                {pipelineData.totalOpportunities} total leads &middot; {pipelineData.sampled} sampled for response analysis
+              </p>
+            </div>
+
+            {/* Response breakdown */}
+            <div className="mb-5 grid gap-4 sm:grid-cols-3">
+              <StatCard
+                label="Replied to Intro"
+                value={`${pipelineData.introResponseRate}%`}
+                sub={`${pipelineData.introResponseCount}/${pipelineData.sampled} sampled`}
+                sparkColor="emerald"
+              />
+              <StatCard
+                label="Replied to Follow-up"
+                value={`${pipelineData.followupResponseRate}%`}
+                sub={`${pipelineData.followupResponseCount}/${pipelineData.sampled}`}
+                sparkColor="amber"
+              />
+              <StatCard
+                label="Never Replied"
+                value={`${pipelineData.neverRepliedRate}%`}
+                sub={`${pipelineData.neverRepliedCount}/${pipelineData.sampled}`}
+                sparkColor="rose"
+              />
+            </div>
+
+            {/* Stage breakdown */}
+            {pipelineData.stageBreakdown.length > 0 && (
+              <div className="mb-5">
+                <p className="mb-3 text-xs font-medium uppercase tracking-[0.18em] text-zinc-500">
+                  Stage Breakdown
+                </p>
+                <div className="space-y-2">
+                  {pipelineData.stageBreakdown.map((s) => (
+                    <div key={s.stage} className="flex items-center gap-3">
+                      <span className="w-44 truncate text-sm text-zinc-300">{s.stage}</span>
+                      <div className="flex-1">
+                        <div className="h-2 rounded-full bg-white/5">
+                          <div
+                            className="h-2 rounded-full bg-gradient-to-r from-cyan-400/60 to-blue-500/40"
+                            style={{ width: `${Math.max(s.pct, 2)}%` }}
+                          />
+                        </div>
+                      </div>
+                      <span className="w-16 text-right text-xs text-zinc-500">
+                        {s.count} ({s.pct}%)
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Top intros for this pipeline */}
+            {pipelineData.topIntros.length > 0 && (
+              <div>
+                <p className="mb-3 text-xs font-medium uppercase tracking-[0.18em] text-zinc-500">
+                  Intro Messages
+                </p>
+                <div className="space-y-3">
+                  {pipelineData.topIntros.filter((p) => p.gotResponse).slice(0, 5).map((pattern, i) => (
+                    <div
+                      key={i}
+                      className="rounded-xl border border-emerald-400/20 bg-emerald-400/[0.04] p-4"
+                    >
+                      <div className="mb-2 flex items-center gap-2">
+                        <span className="inline-flex items-center rounded-full border border-emerald-400/20 bg-emerald-400/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.18em] text-emerald-300">
+                          Got Reply
+                        </span>
+                        <span className="text-xs text-zinc-500">{pattern.name}</span>
+                      </div>
+                      <p className="text-sm leading-6 text-zinc-200">
+                        {pattern.intro.length > 250 ? pattern.intro.slice(0, 250) + '...' : pattern.intro}
+                      </p>
+                      {pattern.reply && (
+                        <div className="mt-2 rounded-lg border border-white/5 bg-white/[0.03] px-3 py-2">
+                          <p className="text-xs text-cyan-300/90">
+                            &ldquo;{pattern.reply.length > 120 ? pattern.reply.slice(0, 120) + '...' : pattern.reply}&rdquo;
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                  {pipelineData.topIntros.filter((p) => !p.gotResponse).slice(0, 3).map((pattern, i) => (
+                    <div
+                      key={`dead-${i}`}
+                      className="rounded-xl border border-white/5 bg-white/[0.02] p-4 opacity-60"
+                    >
+                      <div className="mb-2 flex items-center gap-2">
+                        <span className="inline-flex items-center rounded-full border border-zinc-700/50 bg-zinc-800/50 px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.18em] text-zinc-500">
+                          Dead
+                        </span>
+                        <span className="text-xs text-zinc-600">{pattern.name}</span>
+                      </div>
+                      <p className="text-sm leading-6 text-zinc-400">
+                        {pattern.intro.length > 200 ? pattern.intro.slice(0, 200) + '...' : pattern.intro}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
       )}
 
       {/* ── Empty data state ────────────────────────────── */}
