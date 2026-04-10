@@ -3,7 +3,6 @@ import { initializeDb, memories, costEntries, activityEvents } from '@blade/db'
 import {
   createExecutionAPI,
   loadPersonality,
-  retrieveRelevant,
   speechToText,
   textToSpeech,
 } from '@blade/core'
@@ -50,30 +49,14 @@ const forceNewConversation = new Set<string>()
 const chatConversations = new Map<string, string>()
 
 const executionApi = createExecutionAPI()
-const MEMORY_RELEVANCE_THRESHOLD = 0.45
-
+// PULL-BASED MEMORY: No auto-injection. The agent has recall_memory as a tool
+// and will search when it decides it needs context. This is the Hermes/MemGPT
+// pattern — prevents context contamination by default.
+// Auto-injection was causing the bot to bring up Slack issues, other projects,
+// etc. from keyword-matched memories that weren't relevant to the conversation.
 const conversationEngine = createConversationEngine(executionApi, {
-  retrieveMemories: async (query: string) => {
-    // Only retrieve memories if the query is specific enough (>10 chars, not a greeting)
-    const trimmed = query.trim().toLowerCase()
-    if (trimmed.length < 10 || /^(hi|hey|hello|yo|sup|what's up|how are you)/.test(trimmed)) {
-      return ''
-    }
-
-    const ranked = retrieveRelevant(query, 5)
-    if (ranked.length === 0) return ''
-
-    // Filter to only high-relevance memories to prevent context contamination
-    const relevant = ranked.filter(m => m.relevanceScore >= MEMORY_RELEVANCE_THRESHOLD)
-    if (relevant.length === 0) return ''
-
-    return relevant
-      .map((memory, index) => {
-        const tags = memory.tags.length > 0 ? ` [tags: ${memory.tags.join(', ')}]` : ''
-        return `${index + 1}. (${memory.type}) ${memory.content}${tags}`
-      })
-      .join('\n')
-  },
+  // No retrieveMemories callback = no auto-injection.
+  // The agent uses recall_memory tool when it needs context.
 })
 const telegramAdapter = new TelegramAdapter()
 
