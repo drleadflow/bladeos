@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
+import Database from 'better-sqlite3'
+import path from 'path'
 import {
   getAllMessages,
   getAllMessagesViaFirebase,
@@ -155,7 +157,32 @@ export async function GET(request: NextRequest) {
     )
   }
 
-  // Check cache
+  // Check SQLite persistent cache first (instant response)
+  try {
+    const dbPath = path.resolve(process.cwd(), '../../blade.db')
+    const db = new Database(dbPath, { readonly: true })
+    const cached = db.prepare(
+      `SELECT data_json, datetime(created_at) as synced_at
+       FROM performance_cache
+       WHERE account_id = ? AND expires_at > datetime('now')
+       ORDER BY created_at DESC LIMIT 1`
+    ).get(accountId) as { data_json: string; synced_at: string } | undefined
+
+    db.close()
+
+    if (cached) {
+      return NextResponse.json({
+        success: true,
+        data: JSON.parse(cached.data_json),
+        cached: true,
+        syncedAt: cached.synced_at,
+      })
+    }
+  } catch {
+    // SQLite read failed — fall through to live fetch
+  }
+
+  // Check in-memory cache
   const cacheKey = getCacheKey(accountId, startDate, endDate)
   const cached = cache.get(cacheKey)
   if (cached && cached.expiry > Date.now()) {
@@ -406,8 +433,21 @@ export async function GET(request: NextRequest) {
       topIntros,
     }
 
-    // Cache result
+    // Cache in memory
     cache.set(cacheKey, { data, expiry: Date.now() + CACHE_TTL })
+
+    // Persist to SQLite for instant loads on next visit
+    try {
+      const dbPath = path.resolve(process.cwd(), '../../blade.db')
+      const db = new Database(dbPath)
+      db.prepare(
+        `INSERT OR REPLACE INTO performance_cache (id, account_id, account_name, data_json, created_at, expires_at)
+         VALUES (?, ?, ?, ?, datetime('now'), datetime('now', '+1 hour'))`
+      ).run(`${accountId}-30d`, accountId, accountId, JSON.stringify(data))
+      db.close()
+    } catch {
+      // SQLite write failed — in-memory cache still works
+    }
 
     return NextResponse.json({ success: true, data })
   } catch (error: unknown) {

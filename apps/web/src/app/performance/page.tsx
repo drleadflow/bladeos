@@ -154,6 +154,9 @@ export default function PerformancePage() {
   const [data, setData] = useState<PerformanceData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [cached, setCached] = useState(false)
+  const [syncedAt, setSyncedAt] = useState<string | null>(null)
+  const [syncing, setSyncing] = useState(false)
 
   // Fetch accounts on mount
   useEffect(() => {
@@ -188,6 +191,8 @@ export default function PerformancePage() {
       const json = await res.json()
       if (json.success) {
         setData(json.data)
+        setCached(Boolean(json.cached))
+        setSyncedAt(json.syncedAt ?? null)
       } else if (json.error === 'token_expired') {
         setError(`Token expired for ${accountName}. The account owner needs to reinstall the GHL integration or create a Private Integration Token.`)
       } else {
@@ -216,18 +221,39 @@ export default function PerformancePage() {
       title="Performance"
       description="Review AI Setter data and performance."
       actions={
-        <button
-          onClick={fetchData}
-          className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm font-medium text-zinc-200 transition-all hover:border-white/20 hover:bg-white/[0.08]"
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
-            <path d="M3 3v5h5" />
-            <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
-            <path d="M16 21h5v-5" />
-          </svg>
-          Refresh
-        </button>
+        <div className="flex items-center gap-3">
+          {syncedAt && (
+            <span className="text-xs text-zinc-500">
+              {cached ? 'Cached' : 'Live'} {syncedAt ? `\u00b7 ${new Date(syncedAt).toLocaleTimeString()}` : ''}
+            </span>
+          )}
+          <button
+            onClick={async () => {
+              if (!selectedAccount || syncing) return
+              setSyncing(true)
+              try {
+                await fetch('/api/performance/sync', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ accountId: selectedAccount }),
+                })
+                await fetchData()
+              } finally {
+                setSyncing(false)
+              }
+            }}
+            disabled={syncing}
+            className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm font-medium text-zinc-200 transition-all hover:border-white/20 hover:bg-white/[0.08] disabled:opacity-50"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={syncing ? 'animate-spin' : ''}>
+              <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+              <path d="M3 3v5h5" />
+              <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
+              <path d="M16 21h5v-5" />
+            </svg>
+            {syncing ? 'Syncing...' : 'Refresh'}
+          </button>
+        </div>
       }
     >
       {/* ── Filter bar ──────────────────────────────────── */}
