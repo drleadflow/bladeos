@@ -1,0 +1,37 @@
+name: ig-transcript
+description: Download Instagram reels and generate transcripts using various methods
+version: 1.0.0
+author: Blade
+category: social-media
+
+dependencies:
+  - yt-dlp
+  - ffmpeg
+  - openai-whisper
+
+parameters:
+  url:
+    type: string
+    description: Instagram reel/video URL
+    required: true
+  method:
+    type: string
+    description: Transcription method (whisper, assembly, or manual)
+    default: whisper
+    options: [whisper, assembly, manual]
+  output_dir:
+    type: string
+    description: Directory to save downloads and transcripts
+    default: ./ig_downloads
+
+outputs:
+  video_path: Downloaded video file path
+  transcript_text: Extracted transcript text
+  transcript_file: Transcript file path
+  thumbnail_path: Video thumbnail path
+
+examples:
+  - input:
+      url: "https://www.instagram.com/reel/DW7Ut9HCphd/"
+      method: whisper
+    description: "Download and transcribe an Instagram reel"
