@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, writeFileSync, unlinkSync, chmodSync } from 'node:fs'
+import { mkdtempSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { logger } from '@blade/shared'
@@ -82,11 +82,14 @@ export function commitAndPush(
 
   git(['commit', '-m', message], repoDir)
 
-  // Set up auth via GIT_ASKPASS helper script (avoids token in URL/config)
   if (githubToken) {
-    const askpassScript = join(mkdtempSync(join(tmpdir(), 'blade-askpass-')), 'askpass.sh')
-    writeFileSync(askpassScript, `#!/bin/sh\necho "${githubToken}"`, 'utf-8')
-    chmodSync(askpassScript, 0o700)
+    // Inject token into the remote URL directly — no temp files written to disk
+    const remoteUrl = git(['remote', 'get-url', 'origin'], repoDir)
+    const authedUrl = remoteUrl.replace(
+      'https://github.com/',
+      `https://x-access-token:${githubToken}@github.com/`
+    )
+    git(['remote', 'set-url', 'origin', authedUrl], repoDir)
 
     try {
       execFileSync('git', ['push', 'origin', branch], {
@@ -95,12 +98,12 @@ export function commitAndPush(
         timeout: 120_000,
         env: {
           ...process.env,
-          GIT_ASKPASS: askpassScript,
           GIT_TERMINAL_PROMPT: '0',
         },
       })
     } finally {
-      try { unlinkSync(askpassScript) } catch { /* ignore */ }
+      // Restore original URL so the token is not left in .git/config
+      try { git(['remote', 'set-url', 'origin', remoteUrl], repoDir) } catch { /* ignore */ }
     }
   } else {
     git(['push', 'origin', branch], repoDir)

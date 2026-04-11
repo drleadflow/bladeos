@@ -1,9 +1,10 @@
+import { createHmac, timingSafeEqual } from 'node:crypto'
 import { initializeDb, leadEvents, leadEngagement } from '@blade/db'
 import { logger } from '@blade/shared'
 
 /**
  * GHL Webhook Endpoint — receives real-time events from GoHighLevel.
- * No auth required (webhooks can't carry bearer tokens).
+ * Verifies HMAC-SHA256 signature when GHL_WEBHOOK_SECRET is set.
  * Ingests events into lead_events and updates lead_engagement.
  */
 
@@ -11,7 +12,33 @@ export async function POST(request: Request): Promise<Response> {
   try {
     initializeDb()
 
-    const body = await request.json() as Record<string, unknown>
+    const rawBody = await request.text()
+    const secret = process.env.GHL_WEBHOOK_SECRET
+    const allowUnsignedWebhook = process.env.ALLOW_UNSIGNED_GHL_WEBHOOKS === 'true'
+
+    if (secret) {
+      const signature = request.headers.get('x-ghl-signature') ?? request.headers.get('x-hub-signature-256') ?? ''
+      const expected = createHmac('sha256', secret).update(rawBody).digest('hex')
+      const sigToCompare = signature.startsWith('sha256=') ? signature.slice(7) : signature
+      let valid = false
+      try {
+        valid = sigToCompare.length === expected.length &&
+          timingSafeEqual(Buffer.from(sigToCompare), Buffer.from(expected))
+      } catch {
+        valid = false
+      }
+      if (!valid) {
+        logger.warn('GHL-Webhook', 'Signature mismatch — rejected request')
+        return Response.json({ error: 'Unauthorized: invalid signature' }, { status: 401 })
+      }
+    } else if (allowUnsignedWebhook) {
+      logger.warn('GHL-Webhook', 'ALLOW_UNSIGNED_GHL_WEBHOOKS=true — skipping signature verification')
+    } else {
+      logger.error('GHL-Webhook', 'GHL_WEBHOOK_SECRET not set — refusing unsigned webhook')
+      return Response.json({ error: 'Webhook secret not configured' }, { status: 503 })
+    }
+
+    const body = JSON.parse(rawBody) as Record<string, unknown>
 
     // GHL sends different payload shapes depending on event type
     const eventType = detectEventType(body)

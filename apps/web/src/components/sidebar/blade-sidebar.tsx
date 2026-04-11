@@ -34,6 +34,18 @@ const sections: NavSection[] = [
     ],
   },
   {
+    id: "studio",
+    label: "Studio",
+    icon: "▶",
+    color: "#c084fc",
+    items: [
+      { href: "/studio", label: "Content Studio", icon: "◈" },
+      { href: "/studio/library", label: "Library", icon: "◉" },
+      { href: "/studio/calendar", label: "Calendar", icon: "◎" },
+      { href: "/studio/analytics", label: "Analytics", icon: "◌" },
+    ],
+  },
+  {
     id: "revenue",
     label: "Revenue",
     icon: "$",

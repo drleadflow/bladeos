@@ -20,6 +20,62 @@ program
   .version('0.1.0')
 
 // ============================================================
+// LOGIN COMMAND
+// ============================================================
+
+program
+  .command('login')
+  .description('Authenticate with a remote Blade dashboard')
+  .action(async () => {
+    const rl = createInterface({ input: process.stdin, output: process.stdout })
+    const ask = (q: string): Promise<string> => new Promise(resolve => rl.question(q, resolve))
+    const bladeDir = join(homedir(), '.blade')
+    const configPath = join(bladeDir, 'config.json')
+
+    console.log('\n⚔️  Blade Super Agent — Dashboard Login\n')
+
+    // 1. Get URL
+    const url = (await ask('Dashboard URL (e.g., http://localhost:3000): ')).trim()
+    if (!url) {
+      console.log('\nCancelled.')
+      rl.close()
+      return
+    }
+
+    // 2. Get Token
+    const token = (await ask('Authentication token: ')).trim()
+    if (!token) {
+      console.log('\nCancelled.')
+      rl.close()
+      return
+    }
+
+    // 3. Save config
+    mkdirSync(bladeDir, { recursive: true })
+    let config = {}
+    if (existsSync(configPath)) {
+      try {
+        config = JSON.parse(readFileSync(configPath, 'utf-8'))
+      } catch {
+        // ignore malformed config
+      }
+    }
+
+    const newConfig = {
+      ...config,
+      dashboard: {
+        url,
+        token,
+      },
+    }
+
+    writeFileSync(configPath, JSON.stringify(newConfig, null, 2) + '\n')
+    console.log(`\n✓ Logged in. Configuration saved to ${configPath}\n`)
+
+    rl.close()
+  })
+
+// ============================================================
 // SETUP COMMAND
 // ============================================================
 
