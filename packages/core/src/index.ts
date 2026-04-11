@@ -4,6 +4,7 @@ import './orchestration/builtin-workflows.js'
 
 // Core exports
 export { runAgentLoop } from './agent-loop.js'
+export { manageContext, estimateTokens, estimateMessageTokens, getContextLimit } from './context-manager.js'
 export { requiresApproval, requestApproval, waitForApproval } from './approval-checker.js'
 export { runConversationReply, extractBestResponseText } from './chat/reply.js'
 export { registerTool, getTool, getAllToolDefinitions, getToolsByCategory, executeTool, clearRegistry, createToolScope, createFilteredScope, registerScopedTool, getScopedToolDefinitions, destroyToolScope } from './tool-registry.js'
@@ -116,6 +117,10 @@ export type { ExecutionAPI, AgentStreamEvent, ModelStreamEvent } from './executi
 // Event Channel utility
 export { createEventChannel } from './utils/event-channel.js'
 export type { EventChannel } from './utils/event-channel.js'
+
+// Job Queue
+export { JobQueue, getJobQueue } from './queue/job-queue.js'
+export type { QueuedJob, QueueJobStatus, JobQueueOptions } from './queue/job-queue.js'
 
 // Types
 export type {

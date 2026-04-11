@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { registerTool } from '../tool-registry.js'
 import type { ToolCallResult, ExecutionContext } from '../types.js'
 
@@ -10,7 +11,6 @@ const AGENT_BROWSER_NOT_INSTALLED =
 
 function runAgentBrowser(args: string[]): { success: boolean; output: string } {
   try {
-    const { execFileSync } = require('node:child_process') as typeof import('node:child_process')
     const output = execFileSync('agent-browser', args, {
       encoding: 'utf-8',
       timeout: 60_000,

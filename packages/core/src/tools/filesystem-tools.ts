@@ -7,18 +7,25 @@ import nodePath from 'node:path'
 // FILESYSTEM PATH SECURITY
 // ============================================================
 
-const SAFE_BASE_DIRS: string[] = [
-  process.cwd(),
-  process.env.HOME ? nodePath.join(process.env.HOME, '.blade') : '',
-  '/tmp/blade',
-].filter(Boolean)
+function buildSafeBaseDirs(): string[] {
+  const base: string[] = [
+    process.cwd(),
+    process.env.HOME ? nodePath.join(process.env.HOME, '.blade') : '',
+    '/tmp/blade',
+  ].filter(Boolean)
 
-function validatePath(inputPath: string): string {
-  // Power-user escape hatch
-  if (process.env.BLADE_UNSAFE_FS === '1') {
-    return nodePath.resolve(inputPath)
+  // Allow additional directories via BLADE_ALLOWED_DIRS (comma-separated)
+  const extra = process.env.BLADE_ALLOWED_DIRS ?? ''
+  for (const dir of extra.split(',').map(s => s.trim()).filter(Boolean)) {
+    base.push(nodePath.resolve(dir))
   }
 
+  return base
+}
+
+const SAFE_BASE_DIRS: string[] = buildSafeBaseDirs()
+
+function validatePath(inputPath: string): string {
   const resolved = nodePath.resolve(inputPath)
 
   const isAllowed = SAFE_BASE_DIRS.some(base => {
@@ -30,7 +37,7 @@ function validatePath(inputPath: string): string {
     throw new Error(
       `Path "${resolved}" is outside allowed directories. ` +
       `Allowed bases: ${SAFE_BASE_DIRS.join(', ')}. ` +
-      `Set BLADE_UNSAFE_FS=1 to bypass (power users only).`
+      `Set BLADE_ALLOWED_DIRS to add extra directories.`
     )
   }
 
@@ -163,6 +170,152 @@ registerTool(
       display: `Wrote ${content.length} chars to ${path}`,
       durationMs: 0,
       timestamp: new Date().toISOString(),
+    }
+  }
+)
+
+// ============================================================
+// EDIT FILE (search-and-replace operations)
+// ============================================================
+
+registerTool(
+  {
+    name: 'edit_file',
+    description: 'Edit a file by applying search-and-replace operations. More efficient than write_file for small changes to large files — only specify the parts that change. Each edit searches for an exact string match and replaces it.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        path: {
+          type: 'string',
+          description: 'Relative path to the file to edit',
+        },
+        edits: {
+          type: 'string',
+          description: 'JSON array of edit operations. Each has "search" (exact string to find) and "replace" (replacement string). Example: [{"search": "old code", "replace": "new code"}]',
+        },
+      },
+      required: ['path', 'edits'],
+    },
+    category: 'coding' as const,
+  },
+  async (input: Record<string, unknown>, _context: ExecutionContext): Promise<ToolCallResult> => {
+    const { readFileSync, writeFileSync } = await import('node:fs')
+    const startTime = Date.now()
+    const relPath = input.path as string
+    const editsJson = input.edits as string
+
+    // Parse edits
+    let edits: Array<{ search: string; replace: string }>
+    try {
+      edits = JSON.parse(editsJson)
+    } catch {
+      return {
+        toolUseId: '',
+        toolName: 'edit_file',
+        input,
+        success: false,
+        data: null,
+        display: 'Invalid edits JSON. Expected array of {search, replace} objects.',
+        durationMs: Date.now() - startTime,
+        timestamp: new Date().toISOString(),
+      }
+    }
+
+    if (!Array.isArray(edits) || edits.length === 0) {
+      return {
+        toolUseId: '',
+        toolName: 'edit_file',
+        input,
+        success: false,
+        data: null,
+        display: 'Edits must be a non-empty array of {search, replace} objects.',
+        durationMs: Date.now() - startTime,
+        timestamp: new Date().toISOString(),
+      }
+    }
+
+    // Resolve and validate path
+    let fullPath: string
+    try {
+      fullPath = validatePath(relPath)
+    } catch (err) {
+      return {
+        toolUseId: '',
+        toolName: 'edit_file',
+        input,
+        success: false,
+        data: null,
+        display: `Access denied: ${err instanceof Error ? err.message : String(err)}`,
+        durationMs: Date.now() - startTime,
+        timestamp: new Date().toISOString(),
+      }
+    }
+
+    try {
+      // Read existing file
+      const content = readFileSync(fullPath, 'utf-8')
+      let modified = content
+      const applied: string[] = []
+      const failed: string[] = []
+
+      for (const edit of edits) {
+        if (!edit.search || edit.replace === undefined) {
+          failed.push(`Invalid edit: missing search or replace field`)
+          continue
+        }
+
+        const idx = modified.indexOf(edit.search)
+        if (idx === -1) {
+          failed.push(`Search string not found: "${edit.search.slice(0, 80)}"`)
+          continue
+        }
+
+        modified = modified.slice(0, idx) + edit.replace + modified.slice(idx + edit.search.length)
+        applied.push(`Replaced "${edit.search.slice(0, 40)}" -> "${edit.replace.slice(0, 40)}"`)
+      }
+
+      if (applied.length === 0) {
+        return {
+          toolUseId: '',
+          toolName: 'edit_file',
+          input,
+          success: false,
+          data: null,
+          display: `No edits applied. Failures:\n${failed.join('\n')}`,
+          durationMs: Date.now() - startTime,
+          timestamp: new Date().toISOString(),
+        }
+      }
+
+      // Write modified content
+      writeFileSync(fullPath, modified, 'utf-8')
+
+      const summary = [`Applied ${applied.length}/${edits.length} edits to ${relPath}`]
+      if (failed.length > 0) {
+        summary.push(`Failed: ${failed.join('; ')}`)
+      }
+
+      return {
+        toolUseId: '',
+        toolName: 'edit_file',
+        input,
+        success: true,
+        data: { path: relPath, appliedCount: applied.length, failedCount: failed.length },
+        display: summary.join('\n'),
+        durationMs: Date.now() - startTime,
+        timestamp: new Date().toISOString(),
+      }
+    } catch (err) {
+      return {
+        toolUseId: '',
+        toolName: 'edit_file',
+        input,
+        success: false,
+        data: null,
+        display: `Failed to edit file: ${err instanceof Error ? err.message : String(err)}`,
+        durationMs: Date.now() - startTime,
+        timestamp: new Date().toISOString(),
+      }
     }
   }
 )

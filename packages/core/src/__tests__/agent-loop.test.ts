@@ -30,6 +30,12 @@ vi.mock('../cost-tracker.js', () => ({
   }),
 }))
 
+vi.mock('../approval-checker.js', () => ({
+  requiresApproval: vi.fn(() => false),
+  requestApproval: vi.fn(() => 'approval-1'),
+  waitForApproval: vi.fn(async () => ({ approved: true, decidedBy: 'tester' })),
+}))
+
 vi.mock('@blade/shared', () => ({
   logger: {
     debug: vi.fn(),
@@ -43,10 +49,13 @@ import { runAgentLoop } from '../agent-loop.js'
 import { callModel } from '../model-provider.js'
 import { executeTool } from '../tool-registry.js'
 import { isWithinBudget } from '../cost-tracker.js'
+import { requiresApproval, waitForApproval } from '../approval-checker.js'
 
 const mockedCallModel = vi.mocked(callModel)
 const mockedExecuteTool = vi.mocked(executeTool)
 const mockedIsWithinBudget = vi.mocked(isWithinBudget)
+const mockedRequiresApproval = vi.mocked(requiresApproval)
+const mockedWaitForApproval = vi.mocked(waitForApproval)
 
 function makeTextResponse(text: string): ModelResponse {
   return {
@@ -94,6 +103,8 @@ beforeEach(() => {
     if (budget <= 0) return true
     return spent < budget
   })
+  mockedRequiresApproval.mockReturnValue(false)
+  mockedWaitForApproval.mockResolvedValue({ approved: true, decidedBy: 'tester' })
 })
 
 describe('agent-loop: runAgentLoop', () => {
@@ -165,6 +176,22 @@ describe('agent-loop: runAgentLoop', () => {
     expect(result.stopReason).toBe('end_turn')
     expect(mockedCallModel).toHaveBeenCalledTimes(2)
     expect(mockedExecuteTool).toHaveBeenCalledTimes(1)
+  })
+
+  it('fails closed when the approval system errors', async () => {
+    mockedRequiresApproval.mockReturnValue(true)
+    mockedWaitForApproval.mockRejectedValueOnce(new Error('approval db unavailable'))
+
+    mockedCallModel
+      .mockResolvedValueOnce(makeToolUseResponse('slack_send_message', { channel: 'general', text: 'hi' }))
+      .mockResolvedValueOnce(makeTextResponse('I could not send the message because approvals were unavailable.'))
+
+    const result = await runAgentLoop(makeBaseOptions())
+
+    expect(mockedExecuteTool).not.toHaveBeenCalled()
+    expect(result.turns).toHaveLength(2)
+    expect(result.turns[0]?.toolCalls[0]?.success).toBe(false)
+    expect(result.turns[0]?.toolCalls[0]?.display).toContain('approval system failed')
   })
 
   it('respects maxIterations', async () => {

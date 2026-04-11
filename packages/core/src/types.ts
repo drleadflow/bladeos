@@ -139,6 +139,8 @@ export interface AgentLoopOptions {
   maxWallClockMs?: number
   /** Maximum time per individual tool execution in milliseconds (default: 120_000 = 2 min) */
   toolTimeoutMs?: number
+  /** Execute independent tool calls in parallel (default: true). Set to false for sequential execution. */
+  parallelTools?: boolean
   streaming?: boolean
   onTurn?: (turn: AgentTurn) => void
   onToolCall?: (result: ToolCallResult) => void

@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { readFileSync, writeFileSync, readdirSync, statSync, rmSync } from 'node:fs'
-import { join, relative } from 'node:path'
+import { join, relative, resolve } from 'node:path'
 
 import {
   cloneRepo,
@@ -21,6 +21,7 @@ import { jobs, jobLogs, workerSessions, jobEvals } from '@blade/db'
 import { logger } from '@blade/shared'
 import { runAgentLoop } from '../agent-loop.js'
 import { registerTool, getAllToolDefinitions, createToolScope, registerScopedTool, getScopedToolDefinitions, destroyToolScope } from '../tool-registry.js'
+import { validateShellCommand } from '../tools/shell-tools.js'
 import type {
   ToolDefinition,
   ToolHandler,
@@ -126,11 +127,9 @@ function throwIfStopRequested(jobId: string, onStatus?: (status: string, message
 }
 
 function runLocal(cmd: string, cwd: string): { stdout: string; stderr: string; exitCode: number } {
-  // Validate against blocklist before executing
-  for (const pattern of BLOCKED_COMMANDS) {
-    if (cmd.includes(pattern)) {
-      return { stdout: '', stderr: `Blocked: ${pattern}`, exitCode: 1 }
-    }
+  const validationError = validateShellCommand(cmd)
+  if (validationError !== null) {
+    return { stdout: '', stderr: validationError, exitCode: 1 }
   }
   try {
     const stdout = execFileSync('/bin/sh', ['-c', cmd], { cwd, encoding: 'utf-8', timeout: 120_000, stdio: ['pipe', 'pipe', 'pipe'] }).trim()
@@ -316,7 +315,6 @@ interface ExecAdapter {
 }
 
 function safePath(base: string, relative_path: string): string {
-  const { resolve } = require('node:path') as typeof import('node:path')
   const resolved = resolve(base, relative_path)
   const normalBase = resolve(base)
   if (!resolved.startsWith(normalBase + '/') && resolved !== normalBase) {
@@ -325,17 +323,10 @@ function safePath(base: string, relative_path: string): string {
   return resolved
 }
 
-const BLOCKED_COMMANDS = ['rm -rf /', 'sudo ', 'mkfs', 'dd if=', 'chmod 777 /', '> /dev/', 'curl | sh', 'wget | sh']
-
 function createLocalAdapter(workDir: string): ExecAdapter {
   return {
     async exec(command: string[]) {
       const cmd = command.join(' ')
-      for (const blocked of BLOCKED_COMMANDS) {
-        if (cmd.includes(blocked)) {
-          return { stdout: '', stderr: `Blocked dangerous command: ${blocked}`, exitCode: 1 }
-        }
-      }
       return runLocal(cmd, workDir)
     },
     async readFile(filePath: string) {
@@ -1129,7 +1120,7 @@ export async function runCodingPipeline(params: {
     return {
       prUrl: pr.prUrl,
       prNumber: pr.prNumber,
-      totalCost: agentResult.totalCost,
+      totalCost: agentResult.totalCost + totalFixCost,
     }
   } catch (err) {
     if (err instanceof WorkerStopRequestedError) {

@@ -22,6 +22,30 @@ function createAnthropicClient(config: ModelConfig): Anthropic {
   })
 }
 
+// Client cache to reuse HTTP connections
+const anthropicClients = new Map<string, Anthropic>()
+const openaiClients = new Map<string, OpenAI>()
+
+function getAnthropicClient(config: ModelConfig): Anthropic {
+  const key = `${config.apiKey}:${config.baseUrl ?? 'default'}`
+  let client = anthropicClients.get(key)
+  if (!client) {
+    client = createAnthropicClient(config)
+    anthropicClients.set(key, client)
+  }
+  return client
+}
+
+function getOpenAIClient(config: ModelConfig): OpenAI {
+  const key = `${config.apiKey}:${config.baseUrl ?? 'default'}`
+  let client = openaiClients.get(key)
+  if (!client) {
+    client = createOpenAIClient(config)
+    openaiClients.set(key, client)
+  }
+  return client
+}
+
 function toAnthropicTools(tools: ToolDefinition[]): Anthropic.Messages.Tool[] {
   return tools.map(t => ({
     name: t.name,
@@ -227,7 +251,7 @@ async function callOpenAI(
   tools: ToolDefinition[],
   maxTokens?: number
 ): Promise<ModelResponse> {
-  const client = createOpenAIClient(config)
+  const client = getOpenAIClient(config)
 
   logger.debug('ModelProvider', `Calling OpenAI ${config.modelId} with ${messages.length} messages and ${tools.length} tools`)
 
@@ -267,7 +291,7 @@ export async function callModel(
   }
 
   if (config.provider === 'anthropic') {
-    const client = createAnthropicClient(config)
+    const client = getAnthropicClient(config)
 
     logger.debug('ModelProvider', `Calling ${config.modelId} with ${messages.length} messages and ${tools.length} tools`)
 
@@ -309,7 +333,7 @@ export async function* streamModel(
     throw new Error(`Streaming not supported for provider "${config.provider}"`)
   }
 
-  const client = createAnthropicClient(config)
+  const client = getAnthropicClient(config)
 
   const stream = client.messages.stream({
     model: config.modelId,
@@ -339,7 +363,7 @@ async function* streamOpenAI(
   tools: ToolDefinition[],
   maxTokens?: number
 ): AsyncGenerator<{ type: 'text_delta'; text: string } | { type: 'content_block_stop'; block: ContentBlock } | { type: 'message_done'; response: ModelResponse }> {
-  const client = createOpenAIClient(config)
+  const client = getOpenAIClient(config)
   const openaiMessages = toOpenAIMessages(systemPrompt, messages)
 
   const params: OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming = {
@@ -536,23 +560,32 @@ async function callClaudeCli(
     const resultText: string = parsed.result ?? ''
     const content: ContentBlock[] = []
 
-    // Check if the response contains a tool call JSON
-    const toolCallMatch = resultText.match(/\{"tool":\s*"([^"]+)",\s*"input":\s*(\{[\s\S]*?\})\s*\}/)
-    if (toolCallMatch) {
-      const textBefore = resultText.slice(0, toolCallMatch.index).trim()
+    // Find all tool call JSON objects in the response
+    const toolCallRegex = /\{"tool":\s*"([^"]+)",\s*"input":\s*(\{[^}]*\})\s*\}/g
+    let match: RegExpExecArray | null
+    const toolCalls: Array<{ name: string; input: Record<string, unknown>; index: number }> = []
+
+    while ((match = toolCallRegex.exec(resultText)) !== null) {
+      try {
+        const parsed2 = JSON.parse(match[2])
+        toolCalls.push({ name: match[1], input: parsed2, index: match.index })
+      } catch {
+        // Skip malformed tool calls
+      }
+    }
+
+    if (toolCalls.length > 0) {
+      const textBefore = resultText.slice(0, toolCalls[0].index).trim()
       if (textBefore) {
         content.push({ type: 'text' as const, text: textBefore })
       }
-      try {
+      for (const tc of toolCalls) {
         content.push({
           type: 'tool_use' as const,
           id: `cli-${crypto.randomUUID().slice(0, 8)}`,
-          name: toolCallMatch[1],
-          input: JSON.parse(toolCallMatch[2]),
+          name: tc.name,
+          input: tc.input,
         })
-      } catch {
-        // If JSON parse fails, treat entire response as text
-        content.push({ type: 'text' as const, text: resultText })
       }
     } else {
       content.push({ type: 'text' as const, text: resultText })
@@ -708,22 +741,32 @@ async function callGeminiCli(
 
     const content: ContentBlock[] = []
 
-    // Check if the response contains a tool call JSON
-    const toolCallMatch = resultText.match(/\{"tool":\s*"([^"]+)",\s*"input":\s*(\{[\s\S]*?\})\s*\}/)
-    if (toolCallMatch) {
-      const textBefore = resultText.slice(0, toolCallMatch.index).trim()
+    // Find all tool call JSON objects in the response
+    const toolCallRegex = /\{"tool":\s*"([^"]+)",\s*"input":\s*(\{[^}]*\})\s*\}/g
+    let match: RegExpExecArray | null
+    const toolCalls: Array<{ name: string; input: Record<string, unknown>; index: number }> = []
+
+    while ((match = toolCallRegex.exec(resultText)) !== null) {
+      try {
+        const parsedInput = JSON.parse(match[2])
+        toolCalls.push({ name: match[1], input: parsedInput, index: match.index })
+      } catch {
+        // Skip malformed tool calls
+      }
+    }
+
+    if (toolCalls.length > 0) {
+      const textBefore = resultText.slice(0, toolCalls[0].index).trim()
       if (textBefore) {
         content.push({ type: 'text' as const, text: textBefore })
       }
-      try {
+      for (const tc of toolCalls) {
         content.push({
           type: 'tool_use' as const,
           id: `gemini-${crypto.randomUUID().slice(0, 8)}`,
-          name: toolCallMatch[1],
-          input: JSON.parse(toolCallMatch[2]),
+          name: tc.name,
+          input: tc.input,
         })
-      } catch {
-        content.push({ type: 'text' as const, text: resultText })
       }
     } else {
       content.push({ type: 'text' as const, text: resultText })

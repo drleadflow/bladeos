@@ -11,6 +11,7 @@ import type {
   ModelConfig,
 } from './types.js'
 import { callModel, streamModel, resolveModelConfig, resolveSmartModelConfigChain } from './model-provider.js'
+import { manageContext } from './context-manager.js'
 import { executeTool } from './tool-registry.js'
 import { calculateCost, isWithinBudget } from './cost-tracker.js'
 import { requiresApproval, requestApproval, waitForApproval } from './approval-checker.js'
@@ -110,6 +111,44 @@ function isStuckLoop(
   return recent.every(h => h.name === first.name && h.input === first.input)
 }
 
+/**
+ * Runs async tasks with a concurrency limit.
+ * Results are returned in task submission order (same as Promise.allSettled).
+ *
+ * Future enhancement: individual ToolDefinitions could carry a `sequential: true`
+ * flag to force them out of the parallel batch and run one-at-a-time.
+ */
+async function withConcurrencyLimit<T>(
+  tasks: Array<() => Promise<T>>,
+  limit: number,
+): Promise<PromiseSettledResult<T>[]> {
+  const results: Array<{ index: number } & PromiseSettledResult<T>> = []
+  const executing = new Set<Promise<void>>()
+
+  for (let i = 0; i < tasks.length; i++) {
+    const index = i
+    const task = tasks[i]
+    const p: Promise<void> = task().then(
+      value => { results.push({ index, status: 'fulfilled', value }) },
+      reason => { results.push({ index, status: 'rejected', reason }) },
+    ).then(() => { executing.delete(p) })
+    executing.add(p)
+    if (executing.size >= limit) {
+      await Promise.race(executing)
+    }
+  }
+
+  await Promise.allSettled([...executing])
+
+  // Return in original task order
+  results.sort((a, b) => a.index - b.index)
+  return results.map(({ status, ...rest }) =>
+    status === 'fulfilled'
+      ? { status, value: (rest as { value: T }).value }
+      : { status, reason: (rest as { reason: unknown }).reason },
+  )
+}
+
 /** Wrap a promise with a timeout. Rejects with a descriptive error on timeout. */
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -133,6 +172,7 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
     costBudget = context.costBudget ?? 0,
     maxWallClockMs = DEFAULT_MAX_WALL_CLOCK_MS,
     toolTimeoutMs = DEFAULT_TOOL_TIMEOUT_MS,
+    parallelTools = true,
     streaming = false,
     onTurn,
     onToolCall,
@@ -155,7 +195,7 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
   }
 
   // Mutable message history for the loop
-  const messages: AgentMessage[] = [...options.messages]
+  let messages: AgentMessage[] = [...options.messages]
   const turns: AgentTurn[] = []
   let totalCost = 0
   let totalToolCalls = 0
@@ -183,6 +223,9 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
     }
 
     logger.debug('AgentLoop', `Iteration ${iteration + 1}/${maxIterations} | tokens: ${totalInputTokens}in/${totalOutputTokens}out | cost: $${totalCost.toFixed(4)}`)
+
+    // Manage context window before calling the model
+    messages = await manageContext(messages, systemPrompt, modelConfig)
 
     // Determine if we can use streaming for this provider
     const canStream = streaming && modelConfig.provider !== 'claude-cli'
@@ -330,18 +373,22 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
       continue
     }
 
-    // Execute each tool call with per-tool timeout
+    // Check deadline before executing tools
+    if (Date.now() >= deadline) {
+      logger.warn('AgentLoop', `Wall-clock timeout reached before tool execution`)
+      stopReason = 'timeout'
+      break
+    }
+
+    // Execute tool calls — parallel (default) or sequential (parallelTools: false)
     const toolResults: ContentBlockToolResult[] = []
     const turnToolCalls: ToolCallResult[] = []
 
-    for (const block of toolUseBlocks) {
-      // Check deadline before each tool call
-      if (Date.now() >= deadline) {
-        logger.warn('AgentLoop', `Wall-clock timeout reached during tool execution`)
-        stopReason = 'timeout'
-        break
-      }
-
+    /**
+     * Core logic for executing a single tool block (approval + execution).
+     * Returns a ToolCallResult — never throws; errors are captured in the result.
+     */
+    const executeBlock = async (block: ContentBlockToolUse): Promise<ToolCallResult> => {
       logger.info('AgentLoop', `Tool call: ${block.name}`, block.input)
 
       // Approval gate: check if this tool needs human approval before execution
@@ -361,7 +408,7 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
 
           if (!approved) {
             logger.info('AgentLoop', `Tool "${block.name}" was ${decidedBy === 'system-timeout' ? 'timed out' : 'rejected'}`)
-            const rejectionResult: ToolCallResult = {
+            return {
               toolUseId: block.id,
               toolName: block.name,
               input: block.input,
@@ -373,28 +420,27 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
               durationMs: 0,
               timestamp: new Date().toISOString(),
             }
-            totalToolCalls++
-            onToolCall?.(rejectionResult)
-            turnToolCalls.push(rejectionResult)
-            toolResults.push({
-              type: 'tool_result',
-              tool_use_id: block.id,
-              content: `Error: ${rejectionResult.display}`,
-              is_error: true,
-            })
-            continue
           }
 
           logger.info('AgentLoop', `Tool "${block.name}" approved by ${decidedBy ?? 'operator'}`)
         } catch (approvalErr) {
-          // If approval system fails, log and proceed (fail open for now)
-          logger.warn('AgentLoop', `Approval check failed for "${block.name}", proceeding: ${approvalErr instanceof Error ? approvalErr.message : String(approvalErr)}`)
+          const message = approvalErr instanceof Error ? approvalErr.message : String(approvalErr)
+          logger.error('AgentLoop', `Approval check failed for "${block.name}": ${message}`)
+          return {
+            toolUseId: block.id,
+            toolName: block.name,
+            input: block.input,
+            success: false,
+            data: null,
+            display: `Tool "${block.name}" could not run because the approval system failed: ${message}`,
+            durationMs: 0,
+            timestamp: new Date().toISOString(),
+          }
         }
       }
 
-      let result: ToolCallResult
       try {
-        result = await withTimeout(
+        return await withTimeout(
           executeTool(block.name, block.id, block.input, context),
           toolTimeoutMs,
           `Tool "${block.name}"`,
@@ -405,7 +451,7 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
         logger.error('AgentLoop', `${isTimeout ? 'Tool timeout' : 'Unexpected tool error'} in "${block.name}": ${error.message}`)
         onError?.(error, isTimeout ? `tool_timeout_${block.name}` : `tool_crash_${block.name}`)
 
-        result = {
+        return {
           toolUseId: block.id,
           toolName: block.name,
           input: block.input,
@@ -418,22 +464,56 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
           timestamp: new Date().toISOString(),
         }
       }
-
-      totalToolCalls++
-      onToolCall?.(result)
-      turnToolCalls.push(result)
-
-      toolResults.push({
-        type: 'tool_result',
-        tool_use_id: block.id,
-        content: result.success ? (result.display || JSON.stringify(result.data)) : `Error: ${result.display}`,
-        is_error: !result.success,
-      })
     }
 
-    // If we timed out during tool execution, break
-    if (stopReason === 'timeout') {
-      break
+    if (parallelTools && toolUseBlocks.length > 1) {
+      // Parallel path: run all tool calls concurrently (max 5 at a time)
+      // Results are returned in the same order as toolUseBlocks to match tool_use IDs.
+      const settled = await withConcurrencyLimit(
+        toolUseBlocks.map(block => () => executeBlock(block)),
+        5,
+      )
+
+      for (const settled_result of settled) {
+        // executeBlock never rejects (errors are captured inside), so 'rejected'
+        // would only occur from an unexpected internal error — handle defensively.
+        const result: ToolCallResult = settled_result.status === 'fulfilled'
+          ? settled_result.value
+          : {
+              toolUseId: 'unknown',
+              toolName: 'unknown',
+              input: {},
+              success: false,
+              data: null,
+              display: `Unexpected executor error: ${String(settled_result.reason)}`,
+              durationMs: 0,
+              timestamp: new Date().toISOString(),
+            }
+
+        totalToolCalls++
+        onToolCall?.(result)
+        turnToolCalls.push(result)
+        toolResults.push({
+          type: 'tool_result',
+          tool_use_id: result.toolUseId,
+          content: result.success ? (result.display || JSON.stringify(result.data)) : `Error: ${result.display}`,
+          is_error: !result.success,
+        })
+      }
+    } else {
+      // Sequential path: execute one tool at a time (parallelTools: false, or only 1 tool)
+      for (const block of toolUseBlocks) {
+        const result = await executeBlock(block)
+        totalToolCalls++
+        onToolCall?.(result)
+        turnToolCalls.push(result)
+        toolResults.push({
+          type: 'tool_result',
+          tool_use_id: block.id,
+          content: result.success ? (result.display || JSON.stringify(result.data)) : `Error: ${result.display}`,
+          is_error: !result.success,
+        })
+      }
     }
 
     // Build turn record

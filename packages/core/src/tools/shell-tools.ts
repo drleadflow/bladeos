@@ -3,6 +3,81 @@ import type { ToolCallResult, ExecutionContext } from '../types.js'
 import { stringifyError } from './web-search.js'
 
 // ============================================================
+// SHARED COMMAND VALIDATION (allowlist-based)
+// ============================================================
+
+const ALLOWED_COMMAND_PREFIXES = [
+  'npm', 'npx', 'node ', 'git ', 'ls', 'cat ', 'grep ', 'find ', 'echo ',
+  'mkdir ', 'cd ', 'pwd', 'touch ', 'cp ', 'mv ', 'rm ', 'make', 'cargo ',
+  'go ', 'python -m', 'python3 -m', 'pip ', 'pip3 ', 'yarn ', 'pnpm ',
+  'tsc', 'eslint', 'prettier', 'jest', 'vitest', 'mocha', 'pytest',
+  'rustc', 'gcc', 'g++', 'javac', 'java ', 'mvn ', 'gradle ',
+  'docker ', 'curl ', 'wget ', 'tar ', 'unzip ', 'zip ',
+  'head ', 'tail ', 'wc ', 'sort ', 'uniq ', 'diff ', 'patch ',
+  'chmod ', 'chown ', 'which ', 'env ', 'test ', 'true', 'false',
+  'sed ', 'awk ', 'xargs ', 'tr ', 'cut ',
+]
+
+const ALWAYS_BLOCKED = [
+  'printenv', '/proc/', '/dev/tcp', '/dev/udp',
+  'python -c', 'python3 -c', 'node -e', 'ruby -e', 'perl -e',
+  '| bash', '| sh', '| zsh', '|bash', '|sh', '|zsh',
+  'sh -c', 'bash -c', 'zsh -c',
+  'ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GEMINI_API_KEY', 'GITHUB_TOKEN',
+  'API_KEY', 'SECRET', 'TOKEN', 'PASSWORD',
+]
+
+const DANGEROUS_PATTERNS = [
+  'rm -rf /', 'rm -rf ~', 'rm -rf *',
+  'sudo ', 'su ',
+  'mkfs', 'dd if=', 'fdisk',
+  'chmod 777 /', 'chown -R',
+  '> /dev/', '> /etc/',
+  'eval ', 'exec ',
+  '; rm', '&& rm', '|| rm',
+  'export ',
+  '/etc/passwd', '/etc/shadow',
+  "$'",
+  '\\x',
+  'curl.*|.*sh', 'wget.*|.*sh',
+]
+
+/**
+ * Validates a shell command against the allowlist and blocklists.
+ * Returns null if the command is permitted, or an error string if it should be blocked.
+ */
+export function validateShellCommand(command: string): string | null {
+  // Step 1: check ALWAYS_BLOCKED
+  for (const pattern of ALWAYS_BLOCKED) {
+    if (command.includes(pattern)) {
+      return 'Command not allowed. Only standard development commands are permitted.'
+    }
+  }
+
+  // Step 2: command substitution checks
+  if (command.includes('`') || command.includes('$(') || command.includes('${')) {
+    return 'Command not allowed. Only standard development commands are permitted.'
+  }
+
+  // Step 3: allowlist check
+  const trimmedCommand = command.trimStart()
+  const isAllowed = ALLOWED_COMMAND_PREFIXES.some(prefix => trimmedCommand.startsWith(prefix))
+  if (!isAllowed) {
+    return 'Command not allowed. Only standard development commands are permitted.'
+  }
+
+  // Step 4: secondary DANGEROUS_PATTERNS safety net
+  const lowerCommand = command.toLowerCase()
+  for (const pattern of DANGEROUS_PATTERNS) {
+    if (lowerCommand.includes(pattern.toLowerCase())) {
+      return 'Command not allowed. Only standard development commands are permitted.'
+    }
+  }
+
+  return null
+}
+
+// ============================================================
 // RUN COMMAND (local shell — for non-Docker tasks)
 // ============================================================
 
@@ -30,37 +105,17 @@ registerTool(
     const command = input.command as string
     const cwd = (input.cwd as string) || process.cwd()
 
-    // Comprehensive blocklist to prevent dangerous commands
-    const DANGEROUS_PATTERNS = [
-      'rm -rf /', 'rm -rf ~', 'rm -rf *',
-      'sudo ', 'su ',
-      'mkfs', 'dd if=', 'fdisk',
-      'chmod 777 /', 'chown -R',
-      '> /dev/', '> /etc/',
-      '| sh', '| bash',
-      'eval ', 'exec ',
-      '$(', '`',  // command substitution
-      '; rm', '&& rm', '|| rm',  // chained destructive
-      'env ', 'export ',  // env manipulation
-      '/etc/passwd', '/etc/shadow',  // sensitive files
-      "$'",  // bash ANSI-C quoting for hex escapes
-      '${',  // parameter expansion
-      '\\x',  // hex escapes
-    ]
-
-    const lowerCommand = command.toLowerCase()
-    for (const pattern of DANGEROUS_PATTERNS) {
-      if (lowerCommand.includes(pattern.toLowerCase())) {
-        return {
-          toolUseId: '',
-          toolName: 'run_command',
-          input,
-          success: false,
-          data: null,
-          display: `Command blocked: contains dangerous pattern "${pattern}". This command is not allowed for safety reasons.`,
-          durationMs: 0,
-          timestamp: new Date().toISOString(),
-        }
+    const validationError = validateShellCommand(command)
+    if (validationError !== null) {
+      return {
+        toolUseId: '',
+        toolName: 'run_command',
+        input,
+        success: false,
+        data: null,
+        display: validationError,
+        durationMs: 0,
+        timestamp: new Date().toISOString(),
       }
     }
 
@@ -147,33 +202,34 @@ registerTool(
     const maxResults = parseInt(input.max_results as string ?? '50', 10)
 
     // Inline path validation (shell-tools.ts doesn't import validatePath from filesystem-tools)
+    const { resolve, sep, join: pathJoin } = await import('node:path')
+
     const SAFE_BASE_DIRS_SHELL: string[] = [
       process.cwd(),
-      process.env.HOME ? (await import('node:path')).join(process.env.HOME, '.blade') : '',
+      process.env.HOME ? pathJoin(process.env.HOME, '.blade') : '',
       '/tmp/blade',
+      // Allow additional directories via BLADE_ALLOWED_DIRS (comma-separated)
+      ...(process.env.BLADE_ALLOWED_DIRS ?? '')
+        .split(',')
+        .map(s => s.trim())
+        .filter(Boolean)
+        .map(d => resolve(d)),
     ].filter(Boolean)
 
     const rawSearchPath = (input.path as string) || process.cwd()
-    let rootPath: string
-    if (process.env.BLADE_UNSAFE_FS !== '1') {
-      const { resolve, sep } = await import('node:path')
-      const resolved = resolve(rawSearchPath)
-      const allowed = SAFE_BASE_DIRS_SHELL.some(base => resolved === base || resolved.startsWith(base + sep))
-      if (!allowed) {
-        return {
-          toolUseId: '',
-          toolName: 'search_code',
-          input,
-          success: false,
-          data: null,
-          display: `Access denied: path "${resolved}" is outside allowed directories.`,
-          durationMs: 0,
-          timestamp: new Date().toISOString(),
-        }
+    const rootPath = resolve(rawSearchPath)
+    const allowed = SAFE_BASE_DIRS_SHELL.some(base => rootPath === base || rootPath.startsWith(base + sep))
+    if (!allowed) {
+      return {
+        toolUseId: '',
+        toolName: 'search_code',
+        input,
+        success: false,
+        data: null,
+        display: `Access denied: path "${rootPath}" is outside allowed directories. Set BLADE_ALLOWED_DIRS to add extra directories.`,
+        durationMs: 0,
+        timestamp: new Date().toISOString(),
       }
-      rootPath = resolved
-    } else {
-      rootPath = rawSearchPath
     }
 
     try {

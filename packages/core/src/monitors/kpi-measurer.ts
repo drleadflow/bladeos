@@ -1,4 +1,4 @@
-import { costEntries, activityEvents, kpiDefinitions, kpiMeasurements, jobEvals } from '@blade/db'
+import { costEntries, activityEvents, kpiDefinitions, kpiMeasurements, jobEvals, getDb } from '@blade/db'
 import { logger } from '@blade/shared'
 
 /**
@@ -118,7 +118,6 @@ export async function measureAllKpis(): Promise<number> {
 
 function getAllKpiDefinitions(): { id: string; employeeId: string; name: string; sourceJson: string; direction: string; thresholdsJson: string }[] {
   try {
-    const { getDb } = require('@blade/db')
     const db = getDb()
     return db.prepare(
       'SELECT id, employee_id as employeeId, name, source_json as sourceJson, direction, thresholds_json as thresholdsJson FROM kpi_definitions'
