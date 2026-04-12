@@ -1,6 +1,10 @@
 import { existsSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { resolve, dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { getEmployeeDefinition, loadEmployeeDefinitions } from '@blade/core'
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = dirname(__filename)
 
 export interface EmployeeFramework {
   name: string
@@ -12,6 +16,8 @@ let definitionsLoaded = false
 
 function resolveDefinitionsDir(): string {
   const candidates = [
+    // Resolve from this file's location (apps/web/src/lib/) — works on Railway
+    join(__dirname, '..', '..', '..', '..', 'packages', 'core', 'src', 'employees', 'definitions'),
     resolve(process.cwd(), 'packages/core/src/employees/definitions'),
     resolve(process.cwd(), '../../packages/core/src/employees/definitions'),
   ]
@@ -22,7 +28,7 @@ function resolveDefinitionsDir(): string {
     }
   }
 
-  throw new Error('Employee definitions directory not found')
+  throw new Error(`Employee definitions directory not found. Tried: ${candidates.join(', ')}`)
 }
 
 export function ensureEmployeeDefinitionsLoaded(): void {

@@ -1,8 +1,12 @@
-import { join } from 'node:path'
+import { join, dirname } from 'node:path'
 import { existsSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { initializeDb } from '@blade/db'
 import { startMonitorScheduler, loadEmployeeDefinitions, RoutineScheduler, createExecutionAPI } from '@blade/core'
 import { createConversationEngine } from '@blade/conversation'
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = dirname(__filename)
 
 let initialized = false
 
@@ -18,16 +22,19 @@ export function ensureServerInit(): void {
 
   // Seed employees from YAML definitions (idempotent — skips existing)
   try {
-    // Try multiple possible paths for the definitions directory
+    // Resolve from this file's location (apps/web/src/lib/) to avoid process.cwd() issues on Railway
     const candidates = [
-      join(process.cwd(), '..', 'packages', 'core', 'src', 'employees', 'definitions'),
+      join(__dirname, '..', '..', '..', '..', 'packages', 'core', 'src', 'employees', 'definitions'),
       join(process.cwd(), 'packages', 'core', 'src', 'employees', 'definitions'),
+      join(process.cwd(), '..', 'packages', 'core', 'src', 'employees', 'definitions'),
       join(process.cwd(), '..', '..', 'packages', 'core', 'src', 'employees', 'definitions'),
     ]
     const defsDir = candidates.find(p => existsSync(p))
     if (defsDir) {
       loadEmployeeDefinitions(defsDir)
       console.log('[server-init] Employee definitions loaded from YAML')
+    } else {
+      console.warn('[server-init] Employee definitions directory not found. Tried:', candidates)
     }
   } catch (err) {
     console.error('[server-init] Employee seeding failed:', err)

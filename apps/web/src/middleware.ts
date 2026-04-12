@@ -4,7 +4,7 @@ import type { NextRequest } from 'next/server'
 // In-memory sliding window rate limiter
 const windowMs = 60_000 // 1 minute
 const maxRequests = 60   // 60 req/min for authenticated
-const maxUnauthRequests = 10 // 10 req/min for unauthenticated
+const maxUnauthRequests = 30 // 30 req/min for unauthenticated (pages fire multiple API calls on load)
 
 interface RateEntry {
   timestamps: number[]
@@ -39,8 +39,16 @@ export function middleware(request: NextRequest) {
     return NextResponse.next()
   }
 
+  // Exempt health check and auth endpoints from rate limiting
+  const path = request.nextUrl.pathname
+  if (path === '/api/health' || path.startsWith('/api/auth/')) {
+    return NextResponse.next()
+  }
+
   const ip = getClientIp(request)
-  const hasAuth = !!request.headers.get('authorization') || !!request.cookies.get('blade_token')
+  const hasAuth = !!request.headers.get('authorization')
+    || !!request.cookies.get('blade_token')
+    || !!request.cookies.get('auth_session')
   const limit = hasAuth ? maxRequests : maxUnauthRequests
 
   const now = Date.now()

@@ -47,6 +47,12 @@ export async function POST(req: Request): Promise<Response> {
     authUsers.create(userId, email, name)
     authUsers.setPassword(userId, hashedPassword)
 
+    // First user is automatically admin
+    if (authUsers.count() === 1) {
+      const { getDb } = await import('@blade/db')
+      getDb().prepare('UPDATE auth_user SET role = ? WHERE id = ?').run('admin', userId)
+    }
+
     const session = await lucia.createSession(userId, {})
     const sessionCookie = lucia.createSessionCookie(session.id)
 
