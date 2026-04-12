@@ -19,10 +19,15 @@
   },
   "dependencies": {
     "@blade/shared": "*",
-    "better-sqlite3": "^11.8.0"
+    "@lucia-auth/adapter-drizzle": "^1.1.0",
+    "better-sqlite3": "^11.8.0",
+    "drizzle-orm": "^0.44.2",
+    "pg": "^8.20.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",
+    "@types/pg": "^8.20.0",
+    "drizzle-kit": "^0.30.6",
     "typescript": "^5.8.0",
     "vitest": "^3.1.0"
   }

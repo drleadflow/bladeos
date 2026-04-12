@@ -19,14 +19,16 @@ export interface BladeConfig {
   databasePath: string
 }
 
+const BLADE_DATA_DIR = process.env.BLADE_DATA_DIR ?? join(homedir(), '.blade')
+
 const DEFAULT_CONFIG: BladeConfig = {
   defaultModel: 'claude-sonnet-4-20250514',
   codingModel: 'claude-sonnet-4-20250514',
   maxIterations: 25,
   costBudget: 0,
   port: 3000,
-  skillsDir: join(homedir(), '.blade', 'skills'),
-  databasePath: join(homedir(), '.blade', 'blade.db'),
+  skillsDir: join(BLADE_DATA_DIR, 'skills'),
+  databasePath: join(BLADE_DATA_DIR, 'blade.db'),
 }
 
 export function loadConfig(configPath?: string): BladeConfig {

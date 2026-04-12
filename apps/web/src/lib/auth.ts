@@ -3,7 +3,7 @@ import { join } from 'path'
 import { homedir } from 'os'
 import { getDb, initializeDb } from '@blade/db'
 
-const BLADE_DIR = join(homedir(), '.blade')
+const BLADE_DIR = process.env.BLADE_DATA_DIR ?? join(homedir(), '.blade')
 const SECRET_PATH = join(BLADE_DIR, 'auth-secret')
 
 function getOrCreateAuthSecret(): string {

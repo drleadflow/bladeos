@@ -27,8 +27,8 @@ export function loadPersonality(): string {
     return readFileSync(cwdPath, 'utf-8')
   }
 
-  // 2. Check ~/.blade/SOUL.md
-  const homePath = join(homedir(), '.blade', 'SOUL.md')
+  // 2. Check BLADE_DATA_DIR/SOUL.md (with ~/.blade fallback)
+  const homePath = join(process.env.BLADE_DATA_DIR ?? join(homedir(), '.blade'), 'SOUL.md')
   if (existsSync(homePath)) {
     return readFileSync(homePath, 'utf-8')
   }

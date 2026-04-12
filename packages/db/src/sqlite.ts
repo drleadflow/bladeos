@@ -10,7 +10,7 @@ let _db: Database.Database | null = null
 export function getDb(dbPath?: string): Database.Database {
   if (_db) return _db
 
-  const path = dbPath ?? join(process.cwd(), 'blade.db')
+  const path = dbPath ?? join(process.env.BLADE_DATA_DIR ?? process.cwd(), 'blade.db')
   const dir = dirname(path)
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true })

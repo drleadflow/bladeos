@@ -8,7 +8,7 @@ import { loadSkillsFromDir } from '@blade/core'
 
 export const runtime = 'nodejs'
 
-const BLADE_DIR = join(homedir(), '.blade')
+const BLADE_DIR = process.env.BLADE_DATA_DIR ?? join(homedir(), '.blade')
 const CONFIG_PATH = join(BLADE_DIR, 'config.json')
 const SOUL_PATH = join(BLADE_DIR, 'SOUL.md')
 const ENV_PATH = join(BLADE_DIR, '.env')
