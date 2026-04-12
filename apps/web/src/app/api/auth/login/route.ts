@@ -2,11 +2,13 @@ import { lucia } from '@/lib/lucia'
 import { authUsers } from '@blade/db'
 import { verify } from '@node-rs/argon2'
 import { cookies } from 'next/headers'
+import { ensureServerInit } from '@/lib/server-init'
 
 export const runtime = 'nodejs'
 
 export async function POST(req: Request): Promise<Response> {
   try {
+    ensureServerInit()
     const body = (await req.json()) as { email?: string; password?: string; token?: string }
 
     // Legacy token auth (backward compatibility during migration)
