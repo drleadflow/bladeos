@@ -1,6 +1,7 @@
 import { logger } from '@blade/shared'
 import { setupBuiltinMonitors } from './index.js'
 import { measureAllKpis } from './kpi-measurer.js'
+import { checkPendingPRFeedback } from '../learning/pr-feedback.js'
 import type { MonitorChecker } from './checker.js'
 
 let checker: MonitorChecker | null = null
@@ -37,6 +38,17 @@ export async function startMonitorScheduler(): Promise<void> {
       logger.debug('MonitorScheduler', `KPI measurement skipped: ${err instanceof Error ? err.message : String(err)}`)
     }
 
+    // Check pending PR feedback
+    try {
+      const githubToken = process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN ?? ''
+      if (githubToken) {
+        const processed = await checkPendingPRFeedback(githubToken)
+        if (processed > 0) logger.info('MonitorScheduler', `Processed ${processed} PR feedback(s) on startup`)
+      }
+    } catch (err) {
+      logger.debug('MonitorScheduler', `PR feedback check skipped: ${err instanceof Error ? err.message : String(err)}`)
+    }
+
     // Schedule recurring checks
     intervalId = setInterval(async () => {
       try {
@@ -49,6 +61,14 @@ export async function startMonitorScheduler(): Promise<void> {
         }
         // Also measure KPIs
         try { await measureAllKpis() } catch { /* ignore */ }
+        // Check pending PR feedback
+        try {
+          const githubToken = process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN ?? ''
+          if (githubToken) {
+            const processed = await checkPendingPRFeedback(githubToken)
+            if (processed > 0) logger.info('MonitorScheduler', `Processed ${processed} PR feedback(s)`)
+          }
+        } catch { /* ignore */ }
       } catch (err) {
         logger.error('MonitorScheduler', `Scheduled check failed: ${err instanceof Error ? err.message : String(err)}`)
       }

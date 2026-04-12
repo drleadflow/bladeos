@@ -31,8 +31,30 @@ interface ScheduledRoutine {
   routineName: string
 }
 
+export interface RoutineExecutor {
+  replySync(request: {
+    message: string
+    channel: 'routine'
+    userId: string
+    employeeId?: string
+    systemPromptOverride?: string
+    maxIterations?: number
+    costBudget?: number
+  }): Promise<{
+    conversationId: string
+    responseText: string
+    cost: number
+    toolCalls: number
+  }>
+}
+
 export class RoutineScheduler {
   private readonly _jobs: Map<string, ScheduledRoutine> = new Map()
+  private readonly _executor: RoutineExecutor | null
+
+  constructor(executor?: RoutineExecutor) {
+    this._executor = executor ?? null
+  }
 
   /**
    * Load all enabled routines from the database and create cron jobs for each.
@@ -171,7 +193,49 @@ export class RoutineScheduler {
         25,
       )
 
-      // 6. Run agent loop
+      // 6. Run through ConversationEngine if available, otherwise fall back to agent loop
+      if (this._executor) {
+        const engineResult = await this._executor.replySync({
+          message: routine.task,
+          channel: 'routine',
+          userId: 'routine-scheduler',
+          employeeId: routine.employeeId,
+          systemPromptOverride: systemPrompt,
+          maxIterations,
+          costBudget: 0,
+        })
+
+        const status = 'success'
+        const nextRunAt = getNextRun(routine.schedule)
+        routines.recordRun(routineId, status, nextRunAt)
+
+        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
+        logger.info(
+          'RoutineScheduler',
+          `Routine completed: ${routine.name} (${routineId}) — ${status} in ${elapsed}s`,
+        )
+
+        activityEvents.emit({
+          eventType: 'routine_run',
+          actorType: 'employee',
+          actorId: routine.employeeId,
+          summary: `Routine "${routine.name}" ${status} (${elapsed}s, ${engineResult.toolCalls} tool calls)`,
+          targetType: 'routine',
+          targetId: routineId,
+          conversationId: engineResult.conversationId,
+          detail: {
+            routineName: routine.name,
+            status,
+            elapsedSeconds: Number(elapsed),
+            toolCalls: engineResult.toolCalls,
+            stopReason: 'end_turn',
+            totalCost: engineResult.cost,
+          },
+          costUsd: engineResult.cost,
+        })
+        return
+      }
+
       const result = await runAgentLoop({
         systemPrompt,
         messages: [{ role: 'user', content: routine.task }],

@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import {
   Badge,
@@ -42,25 +42,40 @@ export default function OperationsDashboardPage() {
   const [events, setEvents] = useState<ActivityEvent[]>([])
   const [loading, setLoading] = useState(true)
 
-  const fetchEvents = useCallback(async () => {
-    try {
-      const res = await fetch('/api/timeline?limit=20')
-      const json = await res.json()
-      if (json.success) {
-        setEvents(json.data.events as ActivityEvent[])
-      }
-    } catch {
-      // keep current state
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
   useEffect(() => {
-    fetchEvents()
-    const interval = setInterval(fetchEvents, 8000)
-    return () => clearInterval(interval)
-  }, [fetchEvents])
+    // Initial fetch
+    fetch('/api/timeline?limit=50', { credentials: 'include' })
+      .then(r => r.json())
+      .then(json => {
+        if (json.success) setEvents(json.data.events as ActivityEvent[])
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false))
+
+    // SSE stream for real-time updates
+    const eventSource = new EventSource('/api/timeline/stream')
+
+    eventSource.addEventListener('activity', (e) => {
+      try {
+        const event = JSON.parse(e.data) as ActivityEvent
+        setEvents(prev => [event, ...prev].slice(0, 100))
+      } catch { /* ignore parse errors */ }
+    })
+
+    eventSource.addEventListener('init', (e) => {
+      try {
+        const { events: initialEvents } = JSON.parse(e.data) as { events: ActivityEvent[] }
+        setEvents(initialEvents)
+        setLoading(false)
+      } catch { /* ignore */ }
+    })
+
+    eventSource.onerror = () => {
+      // EventSource auto-reconnects, no action needed
+    }
+
+    return () => eventSource.close()
+  }, [])
 
   const monitorAlerts = events.filter((e) => e.eventType === 'monitor.check').length
   const errorCount = events.filter((e) => e.eventType === 'error').length

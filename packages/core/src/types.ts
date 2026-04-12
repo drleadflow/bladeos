@@ -328,7 +328,7 @@ export interface StoredMessage {
 // CHANNEL & CONVERSATION ENGINE (v2)
 // ============================================================
 
-export type ChannelType = 'web' | 'telegram' | 'cli' | 'api' | 'slack' | 'email'
+export type ChannelType = 'web' | 'telegram' | 'cli' | 'api' | 'slack' | 'email' | 'routine'
 
 export interface ConversationRequest {
   /** Existing conversation ID, or undefined to start a new one. */

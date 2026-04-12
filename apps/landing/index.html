@@ -1,0 +1,1349 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Blade — Your AI Workforce</title>
+  <meta name="description" content="AI-powered agents that clone repos, write code, run tests, and open pull requests. Deploy an entire AI workforce that learns, improves, and never sleeps.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #06060a;
+      --bg-elevated: #0c0c14;
+      --bg-card: #10101c;
+      --bg-card-hover: #16162a;
+      --border: #1a1a2e;
+      --border-hover: #2a2a4e;
+      --text: #e8e8f0;
+      --text-muted: #8888a8;
+      --text-dim: #55556a;
+      --accent: #6366f1;
+      --accent-light: #818cf8;
+      --accent-glow: rgba(99, 102, 241, 0.15);
+      --accent-glow-strong: rgba(99, 102, 241, 0.3);
+      --green: #22c55e;
+      --green-glow: rgba(34, 197, 94, 0.15);
+      --amber: #f59e0b;
+      --red: #ef4444;
+      --radius: 12px;
+      --radius-lg: 20px;
+      --font: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      --mono: 'JetBrains Mono', monospace;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: var(--font);
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      overflow-x: hidden;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ── Noise Overlay ── */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
+      pointer-events: none;
+      z-index: 9999;
+    }
+
+    /* ── Global Grid Background ── */
+    .grid-bg {
+      position: fixed;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(99, 102, 241, 0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(99, 102, 241, 0.03) 1px, transparent 1px);
+      background-size: 60px 60px;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    /* ── Glow Orbs ── */
+    .glow-orb {
+      position: absolute;
+      border-radius: 50%;
+      filter: blur(120px);
+      pointer-events: none;
+      z-index: 0;
+    }
+    .glow-orb.purple { background: rgba(99, 102, 241, 0.12); }
+    .glow-orb.blue { background: rgba(56, 189, 248, 0.08); }
+    .glow-orb.green { background: rgba(34, 197, 94, 0.06); }
+
+    /* ── Layout ── */
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 0 24px;
+      position: relative;
+      z-index: 1;
+    }
+
+    section {
+      position: relative;
+      padding: 120px 0;
+    }
+
+    /* ── Nav ── */
+    nav {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 100;
+      padding: 16px 0;
+      backdrop-filter: blur(20px) saturate(1.2);
+      background: rgba(6, 6, 10, 0.8);
+      border-bottom: 1px solid var(--border);
+      transition: all 0.3s ease;
+    }
+    nav.scrolled {
+      padding: 12px 0;
+      background: rgba(6, 6, 10, 0.95);
+    }
+    .nav-inner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 800;
+      font-size: 20px;
+      letter-spacing: -0.5px;
+      text-decoration: none;
+      color: var(--text);
+    }
+    .logo-icon {
+      width: 32px;
+      height: 32px;
+      background: linear-gradient(135deg, var(--accent), #a78bfa);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      color: white;
+      font-weight: 900;
+    }
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 32px;
+      list-style: none;
+    }
+    .nav-links a {
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 14px;
+      font-weight: 500;
+      transition: color 0.2s;
+    }
+    .nav-links a:hover { color: var(--text); }
+    .nav-cta {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 20px;
+      background: var(--accent);
+      color: white;
+      border-radius: 10px;
+      font-weight: 600;
+      font-size: 14px;
+      text-decoration: none;
+      transition: all 0.2s;
+      border: none;
+      cursor: pointer;
+    }
+    .nav-cta:hover {
+      background: var(--accent-light);
+      transform: translateY(-1px);
+      box-shadow: 0 4px 20px var(--accent-glow-strong);
+    }
+
+    /* ── Hero ── */
+    .hero {
+      padding-top: 180px;
+      padding-bottom: 120px;
+      text-align: center;
+      position: relative;
+      overflow: hidden;
+    }
+    .hero .glow-orb:nth-child(1) { width: 600px; height: 600px; top: -200px; left: 50%; transform: translateX(-50%); }
+    .hero .glow-orb:nth-child(2) { width: 400px; height: 400px; bottom: -100px; right: -100px; }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 16px;
+      background: var(--accent-glow);
+      border: 1px solid rgba(99, 102, 241, 0.2);
+      border-radius: 100px;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--accent-light);
+      margin-bottom: 32px;
+      animation: fadeInUp 0.6s ease;
+    }
+    .badge .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--green);
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    h1 {
+      font-size: clamp(48px, 6vw, 80px);
+      font-weight: 900;
+      letter-spacing: -2px;
+      line-height: 1.05;
+      margin-bottom: 24px;
+      animation: fadeInUp 0.6s ease 0.1s both;
+    }
+    h1 .gradient {
+      background: linear-gradient(135deg, var(--accent-light) 0%, #a78bfa 50%, #c084fc 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .hero-sub {
+      font-size: clamp(16px, 2vw, 20px);
+      color: var(--text-muted);
+      max-width: 640px;
+      margin: 0 auto 48px;
+      line-height: 1.7;
+      animation: fadeInUp 0.6s ease 0.2s both;
+    }
+
+    .hero-actions {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      margin-bottom: 64px;
+      animation: fadeInUp 0.6s ease 0.3s both;
+    }
+
+    .btn-primary {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 14px 28px;
+      background: var(--accent);
+      color: white;
+      border-radius: var(--radius);
+      font-weight: 600;
+      font-size: 16px;
+      text-decoration: none;
+      transition: all 0.25s;
+      border: none;
+      cursor: pointer;
+    }
+    .btn-primary:hover {
+      background: var(--accent-light);
+      transform: translateY(-2px);
+      box-shadow: 0 8px 30px var(--accent-glow-strong);
+    }
+    .btn-secondary {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 14px 28px;
+      background: transparent;
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      font-weight: 600;
+      font-size: 16px;
+      text-decoration: none;
+      transition: all 0.25s;
+      cursor: pointer;
+    }
+    .btn-secondary:hover {
+      border-color: var(--border-hover);
+      background: var(--bg-card);
+      transform: translateY(-2px);
+    }
+
+    /* ── Terminal Demo ── */
+    .terminal {
+      max-width: 720px;
+      margin: 0 auto;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      text-align: left;
+      animation: fadeInUp 0.6s ease 0.4s both;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.03);
+    }
+    .terminal-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 14px 20px;
+      border-bottom: 1px solid var(--border);
+      background: rgba(255,255,255,0.02);
+    }
+    .terminal-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+    }
+    .terminal-dot.red { background: #ff5f57; }
+    .terminal-dot.yellow { background: #febc2e; }
+    .terminal-dot.green { background: #28c840; }
+    .terminal-title {
+      margin-left: 8px;
+      font-size: 13px;
+      color: var(--text-dim);
+      font-family: var(--mono);
+    }
+    .terminal-body {
+      padding: 20px 24px;
+      font-family: var(--mono);
+      font-size: 14px;
+      line-height: 1.8;
+    }
+    .terminal-body .prompt { color: var(--green); }
+    .terminal-body .cmd { color: var(--text); }
+    .terminal-body .flag { color: var(--accent-light); }
+    .terminal-body .comment { color: var(--text-dim); }
+    .terminal-body .output { color: var(--text-muted); }
+    .terminal-body .success { color: var(--green); }
+    .terminal-body .url { color: var(--accent-light); text-decoration: underline; }
+
+    .typing-cursor {
+      display: inline-block;
+      width: 8px;
+      height: 18px;
+      background: var(--accent-light);
+      margin-left: 2px;
+      animation: blink 1s step-end infinite;
+      vertical-align: text-bottom;
+    }
+
+    /* ── Stats Row ── */
+    .stats-row {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 1px;
+      background: var(--border);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      margin-top: 80px;
+      animation: fadeInUp 0.6s ease 0.5s both;
+    }
+    .stat {
+      background: var(--bg-card);
+      padding: 32px;
+      text-align: center;
+      transition: background 0.2s;
+    }
+    .stat:hover { background: var(--bg-card-hover); }
+    .stat-value {
+      font-size: 36px;
+      font-weight: 800;
+      letter-spacing: -1px;
+      margin-bottom: 4px;
+    }
+    .stat-value.purple { color: var(--accent-light); }
+    .stat-value.green { color: var(--green); }
+    .stat-value.amber { color: var(--amber); }
+    .stat-label {
+      font-size: 13px;
+      color: var(--text-muted);
+      font-weight: 500;
+    }
+
+    /* ── Section Headers ── */
+    .section-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 14px;
+      background: var(--accent-glow);
+      border: 1px solid rgba(99, 102, 241, 0.15);
+      border-radius: 100px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--accent-light);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 16px;
+    }
+
+    h2 {
+      font-size: clamp(32px, 4vw, 48px);
+      font-weight: 800;
+      letter-spacing: -1.5px;
+      line-height: 1.1;
+      margin-bottom: 16px;
+    }
+
+    .section-sub {
+      font-size: 17px;
+      color: var(--text-muted);
+      max-width: 600px;
+      line-height: 1.7;
+    }
+    .section-header {
+      text-align: center;
+      margin-bottom: 64px;
+    }
+    .section-header .section-sub {
+      margin: 0 auto;
+    }
+
+    /* ── Features Grid ── */
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1px;
+      background: var(--border);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+    }
+    .feature-card {
+      background: var(--bg-card);
+      padding: 40px 32px;
+      transition: all 0.3s;
+      position: relative;
+    }
+    .feature-card:hover {
+      background: var(--bg-card-hover);
+    }
+    .feature-card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, var(--accent), transparent);
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+    .feature-card:hover::before { opacity: 1; }
+
+    .feature-icon {
+      width: 44px;
+      height: 44px;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+      margin-bottom: 20px;
+    }
+    .feature-icon.purple { background: var(--accent-glow); border: 1px solid rgba(99,102,241,0.2); }
+    .feature-icon.green { background: var(--green-glow); border: 1px solid rgba(34,197,94,0.2); }
+    .feature-icon.blue { background: rgba(56,189,248,0.1); border: 1px solid rgba(56,189,248,0.2); }
+    .feature-icon.amber { background: rgba(245,158,11,0.1); border: 1px solid rgba(245,158,11,0.2); }
+    .feature-icon.red { background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.2); }
+    .feature-icon.pink { background: rgba(236,72,153,0.1); border: 1px solid rgba(236,72,153,0.2); }
+
+    .feature-card h3 {
+      font-size: 18px;
+      font-weight: 700;
+      margin-bottom: 10px;
+      letter-spacing: -0.3px;
+    }
+    .feature-card p {
+      font-size: 14px;
+      color: var(--text-muted);
+      line-height: 1.7;
+    }
+
+    /* ── Employees Section ── */
+    .employees-section { overflow: hidden; }
+
+    .employees-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+    }
+    .employee-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 28px;
+      transition: all 0.3s;
+      position: relative;
+    }
+    .employee-card:hover {
+      border-color: var(--border-hover);
+      transform: translateY(-4px);
+      box-shadow: 0 12px 40px rgba(0,0,0,0.3);
+    }
+    .employee-header {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 16px;
+    }
+    .employee-avatar {
+      width: 44px;
+      height: 44px;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+    }
+    .employee-name {
+      font-weight: 700;
+      font-size: 16px;
+      margin-bottom: 2px;
+    }
+    .employee-role {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+    .employee-card p {
+      font-size: 14px;
+      color: var(--text-muted);
+      line-height: 1.6;
+      margin-bottom: 16px;
+    }
+    .employee-stats {
+      display: flex;
+      gap: 16px;
+    }
+    .employee-stat {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--text-dim);
+    }
+    .employee-stat .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+    }
+    .status-active { background: var(--green); box-shadow: 0 0 8px var(--green-glow); }
+    .status-idle { background: var(--amber); }
+
+    /* ── How It Works ── */
+    .steps {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 24px;
+      position: relative;
+    }
+    .steps::before {
+      content: '';
+      position: absolute;
+      top: 40px;
+      left: 80px;
+      right: 80px;
+      height: 1px;
+      background: linear-gradient(90deg, var(--border), var(--accent), var(--border));
+      z-index: 0;
+    }
+    .step {
+      text-align: center;
+      position: relative;
+      z-index: 1;
+    }
+    .step-number {
+      width: 80px;
+      height: 80px;
+      border-radius: 50%;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 28px;
+      font-weight: 800;
+      color: var(--accent-light);
+      margin: 0 auto 20px;
+      transition: all 0.3s;
+    }
+    .step:hover .step-number {
+      border-color: var(--accent);
+      box-shadow: 0 0 30px var(--accent-glow);
+    }
+    .step h3 {
+      font-size: 16px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+    .step p {
+      font-size: 14px;
+      color: var(--text-muted);
+      line-height: 1.6;
+    }
+
+    /* ── CLI Showcase ── */
+    .cli-showcase {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 48px;
+      align-items: center;
+    }
+    .cli-list {
+      list-style: none;
+    }
+    .cli-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 16px;
+      padding: 20px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .cli-item:last-child { border-bottom: none; }
+    .cli-icon {
+      width: 36px;
+      height: 36px;
+      border-radius: 8px;
+      background: var(--accent-glow);
+      border: 1px solid rgba(99,102,241,0.2);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      font-size: 16px;
+    }
+    .cli-item h4 {
+      font-size: 15px;
+      font-weight: 700;
+      font-family: var(--mono);
+      margin-bottom: 4px;
+    }
+    .cli-item p {
+      font-size: 13px;
+      color: var(--text-muted);
+      line-height: 1.5;
+    }
+
+    /* ── Integration Logos ── */
+    .integrations {
+      text-align: center;
+      padding: 80px 0;
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+    }
+    .integrations-label {
+      font-size: 13px;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      font-weight: 600;
+      margin-bottom: 32px;
+    }
+    .integrations-row {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 48px;
+      flex-wrap: wrap;
+    }
+    .integration-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--text-dim);
+      font-size: 15px;
+      font-weight: 600;
+      transition: color 0.2s;
+    }
+    .integration-item:hover { color: var(--text-muted); }
+    .integration-item span { font-size: 24px; }
+
+    /* ── CTA Section ── */
+    .cta-section {
+      text-align: center;
+      position: relative;
+    }
+    .cta-box {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 80px 60px;
+      position: relative;
+      overflow: hidden;
+    }
+    .cta-box::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 60%;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, var(--accent), transparent);
+    }
+    .cta-box::after {
+      content: '';
+      position: absolute;
+      top: -200px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 600px;
+      height: 400px;
+      background: radial-gradient(ellipse, var(--accent-glow) 0%, transparent 70%);
+      pointer-events: none;
+    }
+    .cta-box h2 { position: relative; z-index: 1; }
+    .cta-box .section-sub { position: relative; z-index: 1; margin: 16px auto 40px; }
+    .cta-box .hero-actions { position: relative; z-index: 1; margin-bottom: 0; }
+
+    .install-cmd {
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px 24px;
+      font-family: var(--mono);
+      font-size: 15px;
+      color: var(--text-muted);
+      margin-top: 24px;
+      position: relative;
+      z-index: 1;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .install-cmd:hover {
+      border-color: var(--border-hover);
+      color: var(--text);
+    }
+    .install-cmd .dollar { color: var(--green); }
+    .install-cmd .copy-icon { color: var(--text-dim); font-size: 14px; }
+
+    /* ── Footer ── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 60px 0 40px;
+    }
+    .footer-grid {
+      display: grid;
+      grid-template-columns: 2fr 1fr 1fr 1fr;
+      gap: 48px;
+      margin-bottom: 48px;
+    }
+    .footer-brand p {
+      font-size: 14px;
+      color: var(--text-muted);
+      line-height: 1.7;
+      margin-top: 12px;
+      max-width: 300px;
+    }
+    .footer-col h4 {
+      font-size: 13px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text);
+      margin-bottom: 16px;
+    }
+    .footer-col a {
+      display: block;
+      font-size: 14px;
+      color: var(--text-muted);
+      text-decoration: none;
+      padding: 4px 0;
+      transition: color 0.2s;
+    }
+    .footer-col a:hover { color: var(--text); }
+    .footer-bottom {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding-top: 32px;
+      border-top: 1px solid var(--border);
+    }
+    .footer-bottom p {
+      font-size: 13px;
+      color: var(--text-dim);
+    }
+    .footer-socials {
+      display: flex;
+      gap: 16px;
+    }
+    .footer-socials a {
+      color: var(--text-dim);
+      font-size: 18px;
+      transition: color 0.2s;
+      text-decoration: none;
+    }
+    .footer-socials a:hover { color: var(--text); }
+
+    /* ── Animations ── */
+    @keyframes fadeInUp {
+      from { opacity: 0; transform: translateY(20px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes blink {
+      50% { opacity: 0; }
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+    @keyframes float {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-10px); }
+    }
+
+    .fade-in {
+      opacity: 0;
+      transform: translateY(24px);
+      transition: opacity 0.6s ease, transform 0.6s ease;
+    }
+    .fade-in.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    /* ── Responsive ── */
+    @media (max-width: 1024px) {
+      .features-grid { grid-template-columns: repeat(2, 1fr); }
+      .employees-grid { grid-template-columns: repeat(2, 1fr); }
+      .steps { grid-template-columns: repeat(2, 1fr); gap: 40px; }
+      .steps::before { display: none; }
+      .footer-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (max-width: 768px) {
+      section { padding: 80px 0; }
+      .hero { padding-top: 140px; padding-bottom: 80px; }
+      .features-grid { grid-template-columns: 1fr; }
+      .employees-grid { grid-template-columns: 1fr; }
+      .steps { grid-template-columns: 1fr; }
+      .stats-row { grid-template-columns: repeat(2, 1fr); }
+      .cli-showcase { grid-template-columns: 1fr; }
+      .hero-actions { flex-direction: column; }
+      .nav-links { display: none; }
+      .footer-grid { grid-template-columns: 1fr; }
+      .footer-bottom { flex-direction: column; gap: 16px; text-align: center; }
+    }
+    @media (max-width: 480px) {
+      .container { padding: 0 16px; }
+      .stats-row { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="grid-bg"></div>
+
+  <!-- ── Nav ── -->
+  <nav id="nav">
+    <div class="container nav-inner">
+      <a href="#" class="logo">
+        <div class="logo-icon">⚔</div>
+        Blade
+      </a>
+      <ul class="nav-links">
+        <li><a href="#features">Features</a></li>
+        <li><a href="#workforce">Workforce</a></li>
+        <li><a href="#how-it-works">How It Works</a></li>
+        <li><a href="#cli">CLI</a></li>
+      </ul>
+      <a href="#get-started" class="nav-cta">Get Started →</a>
+    </div>
+  </nav>
+
+  <!-- ── Hero ── -->
+  <section class="hero">
+    <div class="glow-orb purple"></div>
+    <div class="glow-orb blue"></div>
+    <div class="container">
+      <div class="badge">
+        <span class="dot"></span>
+        Now with autonomous coding + workforce management
+      </div>
+      <h1>
+        Your AI Workforce,<br>
+        <span class="gradient">Ready to Deploy</span>
+      </h1>
+      <p class="hero-sub">
+        AI agents that clone repos, write code, run tests, and open pull requests — autonomously. Deploy an entire team of AI employees that learn, improve, and never sleep.
+      </p>
+      <div class="hero-actions">
+        <a href="#get-started" class="btn-primary">
+          Start Building →
+        </a>
+        <a href="#how-it-works" class="btn-secondary">
+          See How It Works
+        </a>
+      </div>
+
+      <!-- Terminal Demo -->
+      <div class="terminal">
+        <div class="terminal-header">
+          <div class="terminal-dot red"></div>
+          <div class="terminal-dot yellow"></div>
+          <div class="terminal-dot green"></div>
+          <span class="terminal-title">~/.blade</span>
+        </div>
+        <div class="terminal-body">
+          <div><span class="prompt">$</span> <span class="cmd">blade code</span> <span class="flag">"Add a health check endpoint with monitoring"</span> \</div>
+          <div style="padding-left: 24px;"><span class="flag">--repo</span>=<span class="cmd">https://github.com/acme/api</span></div>
+          <br>
+          <div><span class="comment">✓</span> <span class="output">Cloned repository</span></div>
+          <div><span class="comment">✓</span> <span class="output">Created branch blade/health-check-1712847</span></div>
+          <div><span class="comment">✓</span> <span class="output">Analyzed codebase structure (14 files)</span></div>
+          <div><span class="comment">✓</span> <span class="output">Wrote src/routes/health.ts</span></div>
+          <div><span class="comment">✓</span> <span class="output">Wrote src/routes/__tests__/health.test.ts</span></div>
+          <div><span class="comment">✓</span> <span class="output">All 12 tests passing</span></div>
+          <div><span class="success">✓</span> <span class="success">PR opened →</span> <span class="url">github.com/acme/api/pull/47</span></div>
+          <div><span class="output" style="color: var(--text-dim);">  Cost: $0.08 · Time: 2m 14s</span></div>
+          <br>
+          <div><span class="prompt">$</span> <span class="typing-cursor"></span></div>
+        </div>
+      </div>
+
+      <!-- Stats -->
+      <div class="stats-row">
+        <div class="stat">
+          <div class="stat-value purple">60+</div>
+          <div class="stat-label">Built-in Tools</div>
+        </div>
+        <div class="stat">
+          <div class="stat-value green">9</div>
+          <div class="stat-label">AI Employees</div>
+        </div>
+        <div class="stat">
+          <div class="stat-value amber">24/7</div>
+          <div class="stat-label">Always Running</div>
+        </div>
+        <div class="stat">
+          <div class="stat-value purple">$0.08</div>
+          <div class="stat-label">Avg Cost per PR</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Integrations Bar ── -->
+  <div class="integrations">
+    <div class="container">
+      <div class="integrations-label">Integrates with your stack</div>
+      <div class="integrations-row">
+        <div class="integration-item"><span>🐙</span> GitHub</div>
+        <div class="integration-item"><span>💬</span> Slack</div>
+        <div class="integration-item"><span>✈️</span> Telegram</div>
+        <div class="integration-item"><span>🐳</span> Docker</div>
+        <div class="integration-item"><span>📊</span> Meta Ads</div>
+        <div class="integration-item"><span>📞</span> GoHighLevel</div>
+        <div class="integration-item"><span>🔊</span> LiveKit</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Features ── -->
+  <section id="features">
+    <div class="container">
+      <div class="section-header fade-in">
+        <div class="section-badge">✦ Capabilities</div>
+        <h2>Everything You Need to<br>Ship Faster</h2>
+        <p class="section-sub">From autonomous coding to workforce management, Blade gives you a full AI-powered team in a single CLI.</p>
+      </div>
+
+      <div class="features-grid fade-in">
+        <div class="feature-card">
+          <div class="feature-icon purple">🤖</div>
+          <h3>Autonomous Coding</h3>
+          <p>Clone repos, understand codebases, write code, run tests, and open PRs — all without human intervention. Blade handles the full development lifecycle.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon green">🧠</div>
+          <h3>Continuous Learning</h3>
+          <p>Every conversation, PR, and code review makes Blade smarter. It learns patterns, optimizes prompts, and evolves its skills over time.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon blue">🐳</div>
+          <h3>Sandboxed Execution</h3>
+          <p>All code runs in isolated Docker containers with resource limits, network isolation, and automatic cleanup. Safe by default.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon amber">💰</div>
+          <h3>Cost Tracking</h3>
+          <p>Per-task budgets, model-level spending breakdowns, and hard limits prevent runaway costs. Know exactly what every PR costs.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon red">🔒</div>
+          <h3>Security First</h3>
+          <p>Command allowlisting, prompt injection detection, dangerous pattern blocking, and input validation. Enterprise-grade security built in.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon pink">📡</div>
+          <h3>Multi-Channel</h3>
+          <p>CLI, Slack, Telegram, web dashboard — interact with Blade wherever you work. Same capabilities, every interface.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Workforce ── -->
+  <section id="workforce" class="employees-section">
+    <div class="container">
+      <div class="section-header fade-in">
+        <div class="section-badge">👥 AI Workforce</div>
+        <h2>Meet Your New<br><span class="gradient">AI Employees</span></h2>
+        <p class="section-sub">Specialized agents with defined roles, KPIs, and escalation policies. They work autonomously and learn from every interaction.</p>
+      </div>
+
+      <div class="employees-grid fade-in">
+        <div class="employee-card">
+          <div class="employee-header">
+            <div class="employee-avatar" style="background: var(--accent-glow); border: 1px solid rgba(99,102,241,0.3);">👨‍💻</div>
+            <div>
+              <div class="employee-name">Engineering Manager</div>
+              <div class="employee-role">Code Quality & Delivery</div>
+            </div>
+          </div>
+          <p>Tracks PR cycle time, deploy success rates, and codebase health. Keeps your engineering metrics in check.</p>
+          <div class="employee-stats">
+            <div class="employee-stat"><span class="dot status-active"></span> Active</div>
+            <div class="employee-stat">KPIs: PR velocity, test coverage</div>
+          </div>
+        </div>
+
+        <div class="employee-card">
+          <div class="employee-header">
+            <div class="employee-avatar" style="background: rgba(34,197,94,0.1); border: 1px solid rgba(34,197,94,0.3);">📈</div>
+            <div>
+              <div class="employee-name">SDR Agent</div>
+              <div class="employee-role">Sales Development</div>
+            </div>
+          </div>
+          <p>Scores leads, qualifies prospects, and manages outreach sequences. Speed-to-lead framework built in.</p>
+          <div class="employee-stats">
+            <div class="employee-stat"><span class="dot status-active"></span> Active</div>
+            <div class="employee-stat">KPIs: Lead response, qualification</div>
+          </div>
+        </div>
+
+        <div class="employee-card">
+          <div class="employee-header">
+            <div class="employee-avatar" style="background: rgba(245,158,11,0.1); border: 1px solid rgba(245,158,11,0.3);">🤝</div>
+            <div>
+              <div class="employee-name">CSM Agent</div>
+              <div class="employee-role">Customer Success</div>
+            </div>
+          </div>
+          <p>Monitors client health metrics, sends proactive alerts on declining accounts, and manages retention.</p>
+          <div class="employee-stats">
+            <div class="employee-stat"><span class="dot status-active"></span> Active</div>
+            <div class="employee-stat">KPIs: Health score, churn risk</div>
+          </div>
+        </div>
+
+        <div class="employee-card">
+          <div class="employee-header">
+            <div class="employee-avatar" style="background: rgba(236,72,153,0.1); border: 1px solid rgba(236,72,153,0.3);">🎯</div>
+            <div>
+              <div class="employee-name">Growth Lead</div>
+              <div class="employee-role">Marketing & Growth</div>
+            </div>
+          </div>
+          <p>Runs campaign strategy, manages lead nurturing funnels, and tracks growth analytics across channels.</p>
+          <div class="employee-stats">
+            <div class="employee-stat"><span class="dot status-idle"></span> Scheduled</div>
+            <div class="employee-stat">KPIs: CAC, conversion rate</div>
+          </div>
+        </div>
+
+        <div class="employee-card">
+          <div class="employee-header">
+            <div class="employee-avatar" style="background: rgba(56,189,248,0.1); border: 1px solid rgba(56,189,248,0.3);">📋</div>
+            <div>
+              <div class="employee-name">Product Manager</div>
+              <div class="employee-role">Roadmap & Prioritization</div>
+            </div>
+          </div>
+          <p>Prioritizes the roadmap, triages feature requests, and ensures the team builds what matters most.</p>
+          <div class="employee-stats">
+            <div class="employee-stat"><span class="dot status-idle"></span> Scheduled</div>
+            <div class="employee-stat">KPIs: Feature velocity, impact</div>
+          </div>
+        </div>
+
+        <div class="employee-card">
+          <div class="employee-header">
+            <div class="employee-avatar" style="background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.3);">⚙️</div>
+            <div>
+              <div class="employee-name">Ops Manager</div>
+              <div class="employee-role">Infrastructure & DevOps</div>
+            </div>
+          </div>
+          <p>Monitors infrastructure health, manages deployment readiness, and ensures operational reliability 24/7.</p>
+          <div class="employee-stats">
+            <div class="employee-stat"><span class="dot status-active"></span> Active</div>
+            <div class="employee-stat">KPIs: Uptime, deploy success</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── How It Works ── -->
+  <section id="how-it-works">
+    <div class="container">
+      <div class="section-header fade-in">
+        <div class="section-badge">⚡ Workflow</div>
+        <h2>From Command to<br>Pull Request</h2>
+        <p class="section-sub">One command kicks off the entire pipeline. Blade handles everything from cloning to shipping.</p>
+      </div>
+
+      <div class="steps fade-in">
+        <div class="step">
+          <div class="step-number">1</div>
+          <h3>Describe the Task</h3>
+          <p>Tell Blade what you need in natural language. Point it at a repo and let it understand the codebase.</p>
+        </div>
+        <div class="step">
+          <div class="step-number">2</div>
+          <h3>Autonomous Coding</h3>
+          <p>Blade analyzes the codebase, writes clean code in a sandboxed Docker container, and iterates until tests pass.</p>
+        </div>
+        <div class="step">
+          <div class="step-number">3</div>
+          <h3>Test & Validate</h3>
+          <p>Automated test execution, self-correction on failures, and validation against your requirements.</p>
+        </div>
+        <div class="step">
+          <div class="step-number">4</div>
+          <h3>Ship It</h3>
+          <p>Clean commit, pull request opened, cost tracked. Review and merge — or let Blade learn from your feedback.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── CLI Showcase ── -->
+  <section id="cli">
+    <div class="container">
+      <div class="cli-showcase fade-in">
+        <div>
+          <div class="section-badge">⌨️ Command Line</div>
+          <h2>One CLI.<br>Total Control.</h2>
+          <p class="section-sub" style="margin-top: 16px;">Every capability accessible from your terminal. No context switching, no web UI required — though one is included.</p>
+
+          <ul class="cli-list" style="margin-top: 32px;">
+            <li class="cli-item">
+              <div class="cli-icon">→</div>
+              <div>
+                <h4>blade code</h4>
+                <p>Give Blade a task and a repo. It clones, codes, tests, and opens a PR.</p>
+              </div>
+            </li>
+            <li class="cli-item">
+              <div class="cli-icon">💬</div>
+              <div>
+                <h4>blade chat</h4>
+                <p>Interactive conversation with full tool access and persistent memory.</p>
+              </div>
+            </li>
+            <li class="cli-item">
+              <div class="cli-icon">👥</div>
+              <div>
+                <h4>blade team</h4>
+                <p>View all active AI employees, their status, and health indicators.</p>
+              </div>
+            </li>
+            <li class="cli-item">
+              <div class="cli-icon">📊</div>
+              <div>
+                <h4>blade costs</h4>
+                <p>Spending breakdown by model, daily trends, and budget enforcement.</p>
+              </div>
+            </li>
+            <li class="cli-item">
+              <div class="cli-icon">🧬</div>
+              <div>
+                <h4>blade evolve</h4>
+                <p>Run an evolution cycle — optimize prompts, discover patterns, improve skills.</p>
+              </div>
+            </li>
+          </ul>
+        </div>
+
+        <div class="terminal">
+          <div class="terminal-header">
+            <div class="terminal-dot red"></div>
+            <div class="terminal-dot yellow"></div>
+            <div class="terminal-dot green"></div>
+            <span class="terminal-title">blade team</span>
+          </div>
+          <div class="terminal-body">
+            <div><span class="output">AI Workforce Status</span></div>
+            <div><span class="output">───────────────────────────────</span></div>
+            <br>
+            <div><span class="success">●</span> <span class="cmd">Engineering Manager</span>  <span class="output">Active</span></div>
+            <div><span class="output">  PR cycle: 4.2h · Coverage: 87%</span></div>
+            <br>
+            <div><span class="success">●</span> <span class="cmd">SDR Agent</span>           <span class="output">Active</span></div>
+            <div><span class="output">  Leads scored: 24 · Response: 8min</span></div>
+            <br>
+            <div><span class="success">●</span> <span class="cmd">CSM Agent</span>           <span class="output">Active</span></div>
+            <div><span class="output">  Health: 92% · At-risk: 1 client</span></div>
+            <br>
+            <div><span style="color: var(--amber);">●</span> <span class="cmd">Growth Lead</span>          <span class="output">Scheduled</span></div>
+            <div><span class="output">  Next run: 09:00 AM</span></div>
+            <br>
+            <div><span class="output" style="color: var(--text-dim);">  Total cost today: $2.14</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Learning Section ── -->
+  <section>
+    <div class="container">
+      <div class="section-header fade-in">
+        <div class="section-badge">🧠 Evolution</div>
+        <h2>Gets Smarter<br>Every Day</h2>
+        <p class="section-sub">Blade doesn't just execute — it learns from every interaction, PR review, and failure. Continuous improvement, built in.</p>
+      </div>
+
+      <div class="features-grid fade-in" style="grid-template-columns: repeat(3, 1fr);">
+        <div class="feature-card">
+          <div class="feature-icon green">📝</div>
+          <h3>Post-Job Analysis</h3>
+          <p>After every coding task, Blade extracts patterns from what worked, what failed, and why — building a persistent skill library.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon purple">🔄</div>
+          <h3>PR Feedback Loop</h3>
+          <p>Monitors PR comments and code review feedback. Learns from human reviewers to write better code next time.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon blue">🧬</div>
+          <h3>Evolution Cycles</h3>
+          <p>Nightly optimization runs that discover new tools, optimize employee prompts, and build competitive moats.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── CTA ── -->
+  <section id="get-started" class="cta-section">
+    <div class="container">
+      <div class="cta-box fade-in">
+        <h2>Deploy Your AI<br>Workforce Today</h2>
+        <p class="section-sub">One install. One command. An entire team of AI agents working for you around the clock.</p>
+        <div class="hero-actions">
+          <a href="https://github.com/blade-agent/blade" class="btn-primary">
+            Get Started Free →
+          </a>
+          <a href="#" class="btn-secondary">
+            View Documentation
+          </a>
+        </div>
+        <div class="install-cmd" onclick="navigator.clipboard.writeText('npx blade setup')">
+          <span class="dollar">$</span> npx blade setup
+          <span class="copy-icon">📋</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Footer ── -->
+  <footer>
+    <div class="container">
+      <div class="footer-grid">
+        <div class="footer-brand">
+          <a href="#" class="logo">
+            <div class="logo-icon">⚔</div>
+            Blade
+          </a>
+          <p>AI-powered workforce that clones repos, writes code, runs tests, and opens pull requests — autonomously.</p>
+        </div>
+        <div class="footer-col">
+          <h4>Product</h4>
+          <a href="#features">Features</a>
+          <a href="#workforce">AI Workforce</a>
+          <a href="#cli">CLI</a>
+          <a href="#">Pricing</a>
+          <a href="#">Changelog</a>
+        </div>
+        <div class="footer-col">
+          <h4>Resources</h4>
+          <a href="#">Documentation</a>
+          <a href="#">API Reference</a>
+          <a href="#">Examples</a>
+          <a href="#">Blog</a>
+        </div>
+        <div class="footer-col">
+          <h4>Company</h4>
+          <a href="#">About</a>
+          <a href="#">GitHub</a>
+          <a href="#">Twitter</a>
+          <a href="#">Discord</a>
+        </div>
+      </div>
+      <div class="footer-bottom">
+        <p>&copy; 2026 Blade. Built with AI, for builders.</p>
+        <div class="footer-socials">
+          <a href="#">𝕏</a>
+          <a href="#">◆</a>
+          <a href="#">◉</a>
+        </div>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    // ── Nav scroll effect ──
+    const nav = document.getElementById('nav');
+    window.addEventListener('scroll', () => {
+      nav.classList.toggle('scrolled', window.scrollY > 50);
+    });
+
+    // ── Intersection Observer for fade-in ──
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          entry.target.classList.add('visible');
+        }
+      });
+    }, { threshold: 0.1, rootMargin: '0px 0px -60px 0px' });
+
+    document.querySelectorAll('.fade-in').forEach(el => observer.observe(el));
+
+    // ── Smooth scroll for anchor links ──
+    document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+      anchor.addEventListener('click', (e) => {
+        e.preventDefault();
+        const target = document.querySelector(anchor.getAttribute('href'));
+        if (target) {
+          target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      });
+    });
+
+    // ── Copy install command ──
+    document.querySelector('.install-cmd')?.addEventListener('click', function() {
+      navigator.clipboard.writeText('npx blade setup').then(() => {
+        const icon = this.querySelector('.copy-icon');
+        icon.textContent = '✓';
+        setTimeout(() => icon.textContent = '📋', 2000);
+      });
+    });
+  </script>
+</body>
+</html>

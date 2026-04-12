@@ -1,7 +1,8 @@
 import { join } from 'node:path'
 import { existsSync } from 'node:fs'
 import { initializeDb } from '@blade/db'
-import { startMonitorScheduler, loadEmployeeDefinitions, RoutineScheduler } from '@blade/core'
+import { startMonitorScheduler, loadEmployeeDefinitions, RoutineScheduler, createExecutionAPI } from '@blade/core'
+import { createConversationEngine } from '@blade/conversation'
 
 let initialized = false
 
@@ -39,7 +40,9 @@ export function ensureServerInit(): void {
 
   // Start routine scheduler (checks every 60s for due employee routines)
   try {
-    const scheduler = new RoutineScheduler()
+    const executionApi = createExecutionAPI()
+    const routineEngine = createConversationEngine(executionApi)
+    const scheduler = new RoutineScheduler(routineEngine)
     scheduler.start()
     console.log('[server-init] Routine scheduler started')
   } catch (err) {
