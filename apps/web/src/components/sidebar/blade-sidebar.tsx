@@ -121,6 +121,7 @@ const sections: NavSection[] = [
       { href: "/control/integrations", label: "Integrations", icon: "◉" },
       { href: "/control/permissions", label: "Permissions", icon: "◎" },
       { href: "/control/billing", label: "Billing", icon: "◌" },
+      { href: "/control/help", label: "Help & FAQ", icon: "◆" },
     ],
   },
 ];
