@@ -1,6 +1,9 @@
 import { ensureServerInit } from '@/lib/server-init'
 import { initializeDb } from '@blade/db'
 
+export const dynamic = 'force-dynamic'
+export const runtime = 'nodejs'
+
 export function GET() {
   try {
     ensureServerInit()
