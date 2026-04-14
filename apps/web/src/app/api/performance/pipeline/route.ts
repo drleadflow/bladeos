@@ -3,12 +3,18 @@ import Database from 'better-sqlite3'
 import path from 'path'
 import { callTool } from '@/lib/ghl-mcp-client'
 
+function getFirebaseApiKey(): string {
+  const key = process.env.GHL_FIREBASE_API_KEY
+  if (!key) throw new Error('GHL_FIREBASE_API_KEY not configured')
+  return key
+}
+
 async function getFirebaseToken(): Promise<string | null> {
   const refreshToken = process.env.GHL_FIREBASE_REFRESH_TOKEN
   if (!refreshToken) return null
   try {
     const res = await fetch(
-      'https://securetoken.googleapis.com/v1/token?key=AIzaSyB_w3vXmsI7WeQtrIOkjR6xTRVN5uOieiE',
+      `https://securetoken.googleapis.com/v1/token?key=${getFirebaseApiKey()}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },

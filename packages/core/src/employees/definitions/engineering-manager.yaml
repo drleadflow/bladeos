@@ -3,7 +3,47 @@ name: Engineering Manager
 title: Engineering Manager
 department: engineering
 icon: "\U0001F6E0"
+pillar: business
 objective: "Keep the codebase healthy and the team productive."
+system_prompt:
+  coach: ""
+  operator: ""
+personality:
+  archetype: operator
+  tone: direct
+model_preference: standard
+max_budget_per_run: 1.5
+allowed_tools:
+  - web_search
+  - recall_memory
+  - save_memory
+  - run_shell
+  - read_file
+  - list_files
+onboarding_questions: []
+scorecard_metrics: []
+proactive_behaviors: []
+suggested_actions: []
+tool_integrations: []
+skill_assignments: []
+escalation_policy:
+  escalate_to: chief-of-staff
+  conditions:
+    - trigger: error
+      action: notify
+    - trigger: blocked
+      action: handoff
+    - trigger: budget_exceeded
+      action: pause_and_ask
+handoff_rules:
+  - condition: "Feature prioritization or roadmap question"
+    target: product-manager
+    priority: medium
+  - condition: "Infrastructure or deployment issue"
+    target: ops-manager
+    priority: high
+manager: chief-of-staff
+memory_scope: shared
 frameworks:
   - name: Deploy Confidence
     purpose: Keep release risk low enough that the team can ship calmly.
@@ -23,36 +63,6 @@ frameworks:
       - "Identify the slowest stage in delivery"
       - "Protect the team from context thrash"
       - "Eliminate the highest-leverage blocker"
-personality:
-  archetype: operator
-  tone: direct
-model_preference: standard
-max_budget_per_run: 1.5
-allowed_tools:
-  - web_search
-  - recall_memory
-  - save_memory
-  - run_shell
-  - read_file
-  - list_files
-escalation_policy:
-  escalate_to: chief-of-staff
-  conditions:
-    - trigger: error
-      action: notify
-    - trigger: blocked
-      action: handoff
-    - trigger: budget_exceeded
-      action: pause_and_ask
-handoff_rules:
-  - condition: "Feature prioritization or roadmap question"
-    target: product-manager
-    priority: medium
-  - condition: "Infrastructure or deployment issue"
-    target: ops-manager
-    priority: high
-manager: chief-of-staff
-memory_scope: shared
 kpis:
   - id: pr-cycle-time
     name: PR Cycle Time

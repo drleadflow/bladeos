@@ -19,6 +19,7 @@ import {
 } from '@blade/core'
 import { logger } from '@blade/shared'
 import { createConversationEngine } from './engine.js'
+import { createSkillResolver } from './skill-resolver.js'
 
 const REPLY_TIMEOUT_MS = 90_000
 const MAX_CACHED_CHANNELS = 100
@@ -55,6 +56,7 @@ const conversationEngine = createConversationEngine(executionApi, {
       })
       .join('\n')
   },
+  resolveSkillPrompt: createSkillResolver(),
 })
 
 const channelConversations = new Map<string, string>()

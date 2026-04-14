@@ -9,3 +9,5 @@ export { routines, priorities, workflowRuns, kpiDefinitions, kpiMeasurements } f
 export { workspaces } from './repos/workspaces.js'
 export { authUsers, userWorkspaces } from './repos/auth.js'
 export { contentProjects, contentItems, contentCaptions, contentSchedule } from './repos/content.js'
+export { skillPacks } from './repos/skill-packs.js'
+export { onboarding } from './repos/onboarding.js'

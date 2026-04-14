@@ -21,6 +21,21 @@ setInterval(() => {
   })
 }, 5 * 60_000)
 
+function checkRateLimit(ip: string, max: number, windowMs: number): { allowed: boolean } {
+  const key = `auth:${ip}`
+  const now = Date.now()
+  const entry = rateLimits.get(key) ?? { timestamps: [] }
+  entry.timestamps = entry.timestamps.filter(t => now - t < windowMs)
+
+  if (entry.timestamps.length >= max) {
+    return { allowed: false }
+  }
+
+  entry.timestamps.push(now)
+  rateLimits.set(key, entry)
+  return { allowed: true }
+}
+
 function getClientIp(request: NextRequest): string {
   // Use the leftmost IP from X-Forwarded-For (original client IP)
   // Rightmost is the last proxy — attacker can't spoof leftmost behind a trusted proxy
@@ -39,9 +54,20 @@ export function middleware(request: NextRequest) {
     return NextResponse.next()
   }
 
-  // Exempt health check and auth endpoints from rate limiting
+  // Exempt health check from rate limiting
   const path = request.nextUrl.pathname
-  if (path === '/api/health' || path.startsWith('/api/auth/')) {
+  if (path === '/api/health') {
+    return NextResponse.next()
+  }
+
+  const clientIp = getClientIp(request)
+
+  // Stricter rate limit for auth routes
+  if (path.startsWith('/api/auth/')) {
+    const authLimit = checkRateLimit(clientIp, 10, 60_000) // 10 requests per minute
+    if (!authLimit.allowed) {
+      return new NextResponse('Too many auth attempts', { status: 429 })
+    }
     return NextResponse.next()
   }
 

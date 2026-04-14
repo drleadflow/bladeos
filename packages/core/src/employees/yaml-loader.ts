@@ -2,8 +2,57 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import yaml from 'js-yaml'
 import { employees, kpiDefinitions, routines } from '@blade/db'
+import { registerEmployee } from './registry.js'
+import type {
+  EmployeeDefinition,
+  OnboardingQuestion,
+  ScorecardMetric,
+  ProactiveBehavior,
+  ToolIntegration,
+  Framework,
+  KpiDefinition,
+  RoutineDefinition,
+  EscalationPolicy,
+  HandoffRule,
+  Pillar,
+} from './types.js'
 
-export interface YamlKpi {
+// ── Raw YAML shape (snake_case) ─────────────────────────────────
+
+interface RawYamlOnboarding {
+  readonly id: string
+  readonly question: string
+  readonly type: 'text' | 'select' | 'multiselect'
+  readonly options?: string[]
+  readonly memory_type: 'fact' | 'preference'
+  readonly memory_tags: string[]
+}
+
+interface RawYamlScorecard {
+  readonly id: string
+  readonly name: string
+  readonly target: number
+  readonly unit: string
+  readonly direction: string
+}
+
+interface RawYamlProactive {
+  readonly id: string
+  readonly description: string
+  readonly trigger: 'cron' | 'threshold' | 'event'
+  readonly schedule?: string
+  readonly condition?: string
+  readonly action: string
+  readonly cooldown_hours: number
+}
+
+interface RawYamlToolIntegration {
+  readonly question: string
+  readonly tool: string
+  readonly env_key: string
+}
+
+interface RawYamlKpi {
   readonly id: string
   readonly name: string
   readonly target: number
@@ -13,7 +62,7 @@ export interface YamlKpi {
   readonly thresholds: { readonly green: number; readonly yellow: number; readonly red: number }
 }
 
-export interface YamlRoutine {
+interface RawYamlRoutine {
   readonly id: string
   readonly name: string
   readonly schedule: string
@@ -22,35 +71,40 @@ export interface YamlRoutine {
   readonly timeout: number
 }
 
-export interface YamlFramework {
+interface RawYamlFramework {
   readonly name: string
   readonly purpose: string
   readonly moves: readonly string[]
 }
 
-export interface YamlHandoffRule {
+interface RawYamlHandoffRule {
   readonly condition: string
   readonly target: string
   readonly priority: string
 }
 
-export interface YamlEscalationCondition {
+interface RawYamlEscalationCondition {
   readonly trigger: string
   readonly action: string
 }
 
-export interface YamlEscalationPolicy {
+interface RawYamlEscalationPolicy {
   readonly escalate_to: string
-  readonly conditions: readonly YamlEscalationCondition[]
+  readonly conditions: readonly RawYamlEscalationCondition[]
 }
 
-export interface YamlEmployeeDefinition {
+interface RawYamlEmployee {
   readonly id: string
   readonly name: string
   readonly title: string
   readonly department: string
   readonly icon: string
+  readonly pillar?: string
   readonly objective: string
+  readonly system_prompt?: {
+    readonly coach?: string
+    readonly operator?: string
+  }
   readonly personality: {
     readonly archetype: string
     readonly tone: string
@@ -58,24 +112,175 @@ export interface YamlEmployeeDefinition {
   readonly model_preference: string
   readonly max_budget_per_run: number
   readonly allowed_tools: readonly string[]
-  readonly escalation_policy: YamlEscalationPolicy
-  readonly handoff_rules: readonly YamlHandoffRule[]
+  readonly onboarding_questions?: readonly RawYamlOnboarding[]
+  readonly scorecard_metrics?: readonly RawYamlScorecard[]
+  readonly proactive_behaviors?: readonly RawYamlProactive[]
+  readonly suggested_actions?: readonly string[]
+  readonly tool_integrations?: readonly RawYamlToolIntegration[]
+  readonly skill_assignments?: readonly string[]
+  readonly escalation_policy: RawYamlEscalationPolicy
+  readonly handoff_rules: readonly RawYamlHandoffRule[]
   readonly manager: string | null
   readonly memory_scope: string
-  readonly kpis: readonly YamlKpi[]
-  readonly routines: readonly YamlRoutine[]
-  readonly frameworks?: readonly YamlFramework[]
+  readonly frameworks?: readonly RawYamlFramework[]
+  readonly kpis: readonly RawYamlKpi[]
+  readonly routines: readonly RawYamlRoutine[]
 }
 
-const definitionCache = new Map<string, YamlEmployeeDefinition>()
+// ── Conversion helpers ──────────────────────────────────────────
 
-function parseYamlFile(filePath: string): YamlEmployeeDefinition {
+function toOnboarding(raw?: readonly RawYamlOnboarding[]): OnboardingQuestion[] {
+  if (!raw?.length) return []
+  return raw.map((q) => ({
+    id: q.id,
+    question: q.question,
+    type: q.type,
+    options: q.options,
+    memoryType: q.memory_type,
+    memoryTags: [...q.memory_tags],
+  }))
+}
+
+function toScorecardMetrics(raw?: readonly RawYamlScorecard[]): ScorecardMetric[] {
+  if (!raw?.length) return []
+  return raw.map((m) => ({
+    id: m.id,
+    name: m.name,
+    target: m.target,
+    unit: m.unit,
+    direction: m.direction as 'higher' | 'lower',
+  }))
+}
+
+function toProactiveBehaviors(raw?: readonly RawYamlProactive[]): ProactiveBehavior[] {
+  if (!raw?.length) return []
+  return raw.map((b) => ({
+    id: b.id,
+    description: b.description,
+    trigger: b.trigger,
+    schedule: b.schedule,
+    condition: b.condition,
+    action: b.action,
+    cooldownHours: b.cooldown_hours,
+  }))
+}
+
+function toToolIntegrations(raw?: readonly RawYamlToolIntegration[]): ToolIntegration[] {
+  if (!raw?.length) return []
+  return raw.map((t) => ({
+    question: t.question,
+    tool: t.tool,
+    envKey: t.env_key,
+  }))
+}
+
+function toFrameworks(raw?: readonly RawYamlFramework[]): Framework[] {
+  if (!raw?.length) return []
+  return raw.map((f) => ({
+    name: f.name,
+    purpose: f.purpose,
+    moves: [...f.moves],
+  }))
+}
+
+function toKpis(raw?: readonly RawYamlKpi[]): KpiDefinition[] {
+  if (!raw?.length) return []
+  return raw.map((k) => ({
+    id: k.id,
+    name: k.name,
+    target: k.target,
+    unit: k.unit,
+    frequency: k.frequency,
+    direction: k.direction,
+    thresholds: { ...k.thresholds },
+  }))
+}
+
+function toRoutines(raw?: readonly RawYamlRoutine[]): RoutineDefinition[] {
+  if (!raw?.length) return []
+  return raw.map((r) => ({
+    id: r.id,
+    name: r.name,
+    schedule: r.schedule,
+    task: r.task,
+    tools: [...r.tools],
+    timeout: r.timeout,
+  }))
+}
+
+function toEscalationPolicy(raw: RawYamlEscalationPolicy): EscalationPolicy {
+  return {
+    escalateTo: raw.escalate_to,
+    conditions: raw.conditions.map((c) => ({ trigger: c.trigger, action: c.action })),
+  }
+}
+
+function toHandoffRules(raw: readonly RawYamlHandoffRule[]): HandoffRule[] {
+  return raw.map((r) => ({
+    condition: r.condition,
+    target: r.target,
+    priority: r.priority,
+  }))
+}
+
+// ── Cache ───────────────────────────────────────────────────────
+
+const definitionCache = new Map<string, EmployeeDefinition>()
+
+function parseYamlFile(filePath: string): RawYamlEmployee {
   const content = readFileSync(filePath, 'utf-8')
-  return yaml.load(content) as YamlEmployeeDefinition
+  const parsed = yaml.load(content)
+  if (!parsed || typeof parsed !== 'object') {
+    throw new Error(`Invalid YAML in ${filePath}: expected an object`)
+  }
+  const raw = parsed as RawYamlEmployee
+  if (!raw.id || !raw.name || !raw.title) {
+    throw new Error(`Invalid employee definition in ${filePath}: missing id, name, or title`)
+  }
+  if (!raw.escalation_policy || !raw.personality) {
+    throw new Error(`Invalid employee definition in ${filePath}: missing escalation_policy or personality`)
+  }
+  return raw
 }
 
-function formatFrameworkSummary(frameworks?: readonly YamlFramework[]): string {
-  if (!frameworks || frameworks.length === 0) return ''
+function rawToDefinition(raw: RawYamlEmployee): EmployeeDefinition {
+  return {
+    id: raw.id,
+    name: raw.name,
+    title: raw.title,
+    icon: raw.icon,
+    pillar: (raw.pillar ?? 'business') as Pillar,
+    department: raw.department,
+    description: raw.objective,
+    objective: raw.objective,
+    systemPrompt: {
+      coach: raw.system_prompt?.coach ?? '',
+      operator: raw.system_prompt?.operator ?? '',
+    },
+    personality: { archetype: raw.personality.archetype, tone: raw.personality.tone },
+    modelPreference: raw.model_preference,
+    maxBudgetPerRun: raw.max_budget_per_run,
+    tools: [...raw.allowed_tools],
+    onboarding: toOnboarding(raw.onboarding_questions),
+    scorecardMetrics: toScorecardMetrics(raw.scorecard_metrics),
+    proactiveBehaviors: toProactiveBehaviors(raw.proactive_behaviors),
+    suggestedActions: [...(raw.suggested_actions ?? [])],
+    toolIntegrations: toToolIntegrations(raw.tool_integrations),
+    skillAssignments: [...(raw.skill_assignments ?? [])],
+    escalationPolicy: toEscalationPolicy(raw.escalation_policy),
+    handoffRules: toHandoffRules(raw.handoff_rules),
+    manager: raw.manager,
+    memoryScope: raw.memory_scope,
+    frameworks: toFrameworks(raw.frameworks),
+    kpis: toKpis(raw.kpis),
+    routines: toRoutines(raw.routines),
+  }
+}
+
+// ── Public API ──────────────────────────────────────────────────
+
+function formatFrameworkSummary(frameworks: readonly Framework[]): string {
+  if (frameworks.length === 0) return ''
 
   return frameworks
     .slice(0, 3)
@@ -86,7 +291,7 @@ function formatFrameworkSummary(frameworks?: readonly YamlFramework[]): string {
     .join(' | ')
 }
 
-function buildObjective(def: YamlEmployeeDefinition): string {
+function buildObjective(def: EmployeeDefinition): string {
   const summary = formatFrameworkSummary(def.frameworks)
   if (!summary) return def.objective
 
@@ -98,32 +303,35 @@ export function loadEmployeeDefinitions(dirPath: string): void {
 
   for (const file of files) {
     const filePath = join(dirPath, file)
-    const def = parseYamlFile(filePath)
+    const raw = parseYamlFile(filePath)
+    const def = rawToDefinition(raw)
     definitionCache.set(def.id, def)
 
+    // Register in the in-memory registry so getEmployee/getAllEmployees work
+    registerEmployee(def)
+
     // Upsert the employee into the database
-    // Map department to pillar (legacy CHECK constraint requires business|health|wealth|relationships|spirituality)
-    const result = employees.upsert({
+    employees.upsert({
       slug: def.id,
       name: def.name,
       title: def.title,
-      pillar: 'business',
-      description: def.objective,
+      pillar: def.pillar,
+      description: def.description,
       icon: def.icon,
       active: false,
       archetype: def.personality.archetype,
       department: def.department,
       objective: buildObjective(def),
       managerId: def.manager ?? undefined,
-      allowedToolsJson: [...def.allowed_tools],
-      modelPreference: def.model_preference,
-      maxBudgetPerRun: def.max_budget_per_run,
-      escalationPolicyJson: def.escalation_policy,
-      handoffRulesJson: [...def.handoff_rules],
-      memoryScope: def.memory_scope,
+      allowedToolsJson: def.tools,
+      modelPreference: def.modelPreference,
+      maxBudgetPerRun: def.maxBudgetPerRun,
+      escalationPolicyJson: def.escalationPolicy,
+      handoffRulesJson: def.handoffRules,
+      memoryScope: def.memoryScope,
     })
 
-    // Use slug as employeeId for consistency — all queries use slug
+    // Use slug as employeeId for consistency
     const employeeId = def.id
 
     // Load existing KPIs for idempotency check
@@ -161,26 +369,30 @@ export function loadEmployeeDefinitions(dirPath: string): void {
         description: `Routine: ${routine.name} for ${def.name}`,
         schedule: routine.schedule,
         task: routine.task,
-        tools: [...routine.tools],
+        tools: routine.tools,
         timeoutSeconds: routine.timeout,
       })
     }
   }
 }
 
-export function getEmployeeDefinition(slug: string): YamlEmployeeDefinition | undefined {
-  if (definitionCache.has(slug)) {
-    return definitionCache.get(slug)
-  }
-
-  // Not in cache — caller may not have loaded definitions yet
-  return undefined
+export function getEmployeeDefinition(slug: string): EmployeeDefinition | undefined {
+  return definitionCache.get(slug)
 }
 
-export function getAllEmployeeDefinitions(): ReadonlyMap<string, YamlEmployeeDefinition> {
+export function getAllEmployeeDefinitions(): ReadonlyMap<string, EmployeeDefinition> {
   return definitionCache
 }
 
 export function clearDefinitionCache(): void {
   definitionCache.clear()
 }
+
+// Re-export YAML-specific types for backward compatibility
+export type { RawYamlKpi as YamlKpi }
+export type { RawYamlRoutine as YamlRoutine }
+export type { RawYamlFramework as YamlFramework }
+export type { RawYamlHandoffRule as YamlHandoffRule }
+export type { RawYamlEscalationCondition as YamlEscalationCondition }
+export type { RawYamlEscalationPolicy as YamlEscalationPolicy }
+export type { RawYamlEmployee as YamlEmployeeDefinition }

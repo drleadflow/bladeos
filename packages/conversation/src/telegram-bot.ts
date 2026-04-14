@@ -1,14 +1,31 @@
 import TelegramBot from 'node-telegram-bot-api'
-import { initializeDb, memories, costEntries, activityEvents, workspaces as wsRepo, clientAccounts } from '@blade/db'
+import { initializeDb, memories, costEntries, activityEvents, workspaces as wsRepo, clientAccounts, onboarding as onboardingRepo } from '@blade/db'
 import {
   createExecutionAPI,
   loadPersonality,
   speechToText,
   textToSpeech,
+  advanceState,
+  getQuestionPrompt,
+  executeInstall,
+  getSuggestedPrompts,
+  isSkipSignal,
+  getCoreEmployeeIds,
 } from '@blade/core'
+import type { OnboardingSession, OnboardingState } from '@blade/core'
 import { logger } from '@blade/shared'
+import { join } from 'node:path'
+import { writeFileSync, mkdtempSync, unlinkSync, rmdirSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { createConversationEngine } from './engine.js'
 import { TelegramAdapter } from './adapters/telegram.js'
+import { createSkillResolver } from './skill-resolver.js'
+
+function safeJsonParse<T>(raw: string | null | undefined, fallback: T): T {
+  if (!raw) return fallback
+  try { return JSON.parse(raw) as T }
+  catch { return fallback }
+}
 
 const TELEGRAM_MAX_MESSAGE_LENGTH = 4096
 const REPLY_TIMEOUT_MS = 90_000
@@ -20,7 +37,17 @@ const activeChatReplies = new Map<string, Promise<void>>()
 // Queue: if a message arrives while one is processing, hold the latest
 const pendingMessages = new Map<string, { text: string; resolve: () => void }>()
 
-const SYSTEM_PROMPT = `You are Blade, an AI super agent built by Blade Labs. You are helpful, direct, and capable.
+const SYSTEM_PROMPT = `You are Blade — an AI workforce of 6 specialized employees running inside Telegram.
+
+You have a Chief of Staff, Growth Lead, Sales Closer, Finance Analyst, Ops Manager, and Support Lead — all working for the user.
+
+Personality:
+- Direct and action-oriented. No fluff.
+- Speak like a sharp COO who's been with the company for years.
+- When the user asks for something, DO IT. Don't ask clarifying questions unless truly ambiguous.
+- Use the user's business context from memory when available.
+- Never mention Claude, AI models, or internal system details.
+- You are Blade. That's it.
 
 CRITICAL RULES:
 1. ONLY respond to what the user just said. Do NOT bring up topics from memory unless the user asks about them.
@@ -50,9 +77,7 @@ You are communicating via Telegram. IMPORTANT formatting rules:
 - Keep responses concise for mobile reading.
 - Do NOT use markdown formatting (no **bold**, no *italic*, no ## headers, no \`code blocks\`).
 - Write in plain text only. Use emojis sparingly for emphasis instead of markdown.
-- Be conversational and natural, like texting a friend who happens to be incredibly capable.
-- Never mention Claude, Claude Code, or any internal system details.
-- You are Blade. That's it.`
+- Be conversational and natural, like texting a friend who happens to be incredibly capable.`
 
 const MAX_CACHED_CHATS = 100
 const forceNewConversation = new Set<string>()
@@ -67,6 +92,7 @@ const executionApi = createExecutionAPI()
 const conversationEngine = createConversationEngine(executionApi, {
   // No retrieveMemories callback = no auto-injection.
   // The agent uses recall_memory tool when it needs context.
+  resolveSkillPrompt: createSkillResolver(),
 })
 const telegramAdapter = new TelegramAdapter()
 
@@ -377,6 +403,94 @@ async function runTelegramReply(params: {
   await replyPromise
 }
 
+// ── Onboarding flow ───���──────────────────────────────────────────
+
+function getPacksDir(): string {
+  // Resolve skill-packs relative to the project root
+  return join(process.cwd(), 'skill-packs')
+}
+
+function persistSession(session: OnboardingSession): void {
+  onboardingRepo.update(session.id, {
+    state: session.state,
+    vertical: session.vertical ?? null,
+    selectedEmployees: JSON.stringify(getCoreEmployeeIds()),
+    answers: JSON.stringify(session.answers),
+    currentEmployeeIndex: 0,
+    currentQuestionIndex: 0,
+  })
+}
+
+async function handleOnboarding(bot: TelegramBot, chatId: string, message: string): Promise<boolean> {
+  const numChatId = Number(chatId)
+
+  // Look up active onboarding session
+  const row = onboardingRepo.getByChannel('telegram', chatId)
+  if (!row) return false
+  if (row.state === 'complete' || row.state === 'installing') return false
+
+  let session: OnboardingSession = {
+    id: row.id,
+    channel: row.channel,
+    channelId: row.channelId,
+    state: row.state as OnboardingState,
+    vertical: row.vertical ?? undefined,
+    answers: safeJsonParse(row.answers, {}),
+  }
+
+  // Skip signal — jump straight to install with whatever we have
+  if (isSkipSignal(message)) {
+    session = { ...session, state: 'installing' }
+    persistSession(session)
+    await runInstall(bot, chatId, session)
+    return true
+  }
+
+  // Advance the state with the user's answer
+  session = advanceState(session, message.trim())
+  persistSession(session)
+
+  // If we've moved to installing, run the install
+  if (session.state === 'installing') {
+    await runInstall(bot, chatId, session)
+    return true
+  }
+
+  // Otherwise, ask the next question
+  const nextPrompt = getQuestionPrompt(session.state)
+  if (nextPrompt) {
+    await sendWithRetry(bot, numChatId, nextPrompt)
+  }
+
+  return true
+}
+
+async function runInstall(bot: TelegramBot, chatId: string, session: OnboardingSession): Promise<void> {
+  const numChatId = Number(chatId)
+  await sendWithRetry(bot, numChatId, 'Setting up your team...')
+
+  try {
+    const result = executeInstall(session, getPacksDir())
+
+    onboardingRepo.complete(session.id)
+
+    const prompts = getSuggestedPrompts(session)
+    const promptList = prompts.map((p, i) => `${i + 1}. "${p}"`).join('\n')
+
+    await sendWithRetry(bot, numChatId,
+      `Your team is ready!\n\n` +
+      `${result.employeesActivated} employees activated\n` +
+      `${result.memoriesSeeded} memories seeded\n` +
+      `${result.skillsInstalled} skills installed\n\n` +
+      `Try asking:\n${promptList}`)
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err)
+    logger.error('Telegram', `Onboarding install failed: ${errMsg}`)
+    await sendWithRetry(bot, numChatId, 'Setup hit a snag. Try /start again, or just send me a message and I\'ll work without the full setup.')
+    onboardingRepo.complete(session.id)
+  }
+}
+
 export function startTelegramBot(token: string, allowedChatIds?: string[]): TelegramBot {
   // ── Startup validation (fail loud, not silent) ──────────────────
   if (!token || token.length < 20) {
@@ -436,15 +550,42 @@ export function startTelegramBot(token: string, allowedChatIds?: string[]): Tele
   }
 
   bot.onText(/\/start/, async (msg) => {
+    const chatId = String(msg.chat.id)
+
     if (!isAllowed(msg.chat.id)) return
 
     try {
-      await bot.sendMessage(
-        msg.chat.id,
-        '⚔️ Blade Super Agent\n\nI\'m Blade, your AI assistant. Send me a message and I\'ll help you out.\n\nCommands:\n/help — List commands\n/memory — View recent memories\n/costs — View cost summary\n/new — Start a new conversation'
-      )
+      // Immediately activate core employees — no questions asked
+      const { executeInstantSetup } = await import('@blade/core')
+      const result = executeInstantSetup(getPacksDir())
+
+      // Send welcome with concrete value preview
+      const welcome = [
+        `Welcome to Blade. Your AI workforce is live.`,
+        ``,
+        `${result.employeesActivated} employees activated. ${result.skillsInstalled} skills loaded.`,
+        ``,
+        `Here's what I can do right now:`,
+        `- "Give me a morning briefing" — your daily priorities and metrics`,
+        `- "Write me a follow-up email for [client]" — drafts in your voice`,
+        `- "Audit my pipeline" — finds stale deals and missed follow-ups`,
+        `- "Score this candidate: [details]" — instant qualification`,
+        `- "What should I focus on today?" — your Chief of Staff weighs in`,
+        ``,
+        `Just talk to me like a team member. I learn from every conversation.`,
+      ].join('\n')
+
+      await sendWithRetry(bot, msg.chat.id, welcome)
+
+      // Auto-trigger a useful first action — morning briefing
+      // This shows immediate value instead of asking questions
+      forceNewConversation.add(chatId)
+
     } catch (err) {
-      logger.error('Telegram', `/start error: ${err instanceof Error ? err.message : String(err)}`)
+      const errMsg = err instanceof Error ? err.message : String(err)
+      logger.error('Telegram', `Setup failed: ${errMsg}`)
+      await sendWithRetry(bot, msg.chat.id,
+        'Welcome to Blade! Something went wrong with auto-setup, but you can still chat with me. Just send any message.')
     }
   })
 
@@ -621,6 +762,9 @@ export function startTelegramBot(token: string, allowedChatIds?: string[]): Tele
     }
   })
 
+  // Note: No onboarding check needed here — onboarding is now instant
+  // (zero-question setup on /start). Photo messages always go through
+  // the normal conversation flow.
   bot.on('photo', async (msg) => {
     if (!isAllowed(msg.chat.id)) return
 
@@ -628,8 +772,8 @@ export function startTelegramBot(token: string, allowedChatIds?: string[]): Tele
 
     try {
       // Get the highest resolution photo (last in array)
-      const photos = msg.photo!
-      const bestPhoto = photos[photos.length - 1]
+      if (!msg.photo?.length) return
+      const bestPhoto = msg.photo[msg.photo.length - 1]
       const fileLink = await bot.getFileLink(bestPhoto.file_id)
       const imgResponse = await fetch(fileLink)
       if (!imgResponse.ok) {
@@ -662,10 +806,6 @@ export function startTelegramBot(token: string, allowedChatIds?: string[]): Tele
       await bot.sendChatAction(Number(chatId), 'typing').catch(() => {})
 
       // Use the vision tool directly: save to temp file, call analyze_image via conversation
-      const { writeFileSync, mkdtempSync } = await import('node:fs')
-      const { join } = await import('node:path')
-      const { tmpdir } = await import('node:os')
-
       const tmpDir = mkdtempSync(join(tmpdir(), 'blade-img-'))
       const ext = mediaType === 'image/png' ? '.png' : mediaType === 'image/webp' ? '.webp' : '.jpg'
       const imgPath = join(tmpDir, `telegram-photo${ext}`)
@@ -682,7 +822,6 @@ export function startTelegramBot(token: string, allowedChatIds?: string[]): Tele
 
       // Cleanup temp file
       try {
-        const { unlinkSync, rmdirSync } = await import('node:fs')
         unlinkSync(imgPath)
         rmdirSync(tmpDir)
       } catch { /* best effort cleanup */ }
@@ -692,14 +831,18 @@ export function startTelegramBot(token: string, allowedChatIds?: string[]): Tele
     }
   })
 
+  // Note: No onboarding check needed here — onboarding is now instant
+  // (zero-question setup on /start). Voice messages always go through
+  // the normal conversation flow.
   bot.on('voice', async (msg) => {
     if (!isAllowed(msg.chat.id)) return
 
     const chatId = String(msg.chat.id)
 
     try {
+      if (!msg.voice) return
       await bot.sendMessage(msg.chat.id, 'Transcribing...')
-      const fileLink = await bot.getFileLink(msg.voice!.file_id)
+      const fileLink = await bot.getFileLink(msg.voice.file_id)
       const audioResponse = await fetch(fileLink)
       if (!audioResponse.ok) {
         throw new Error(`Failed to download voice file: ${audioResponse.status}`)
@@ -738,12 +881,23 @@ export function startTelegramBot(token: string, allowedChatIds?: string[]): Tele
     if (!msg.text || msg.text.startsWith('/')) return
     if (!isAllowed(msg.chat.id)) return
 
+    const chatId = String(msg.chat.id)
+
+    // Check if user is in onboarding flow
+    try {
+      const handled = await handleOnboarding(bot, chatId, msg.text.trim())
+      if (handled) return
+    } catch (err) {
+      logger.error('Telegram', `Onboarding error: ${err instanceof Error ? err.message : String(err)}`)
+      // Fall through to normal reply on onboarding failure
+    }
+
     // runTelegramReply handles its own errors internally (never throws to caller)
     // but we keep a safety net that ALWAYS notifies the user
     try {
       await runTelegramReply({
         bot,
-        chatId: String(msg.chat.id),
+        chatId,
         userText: msg.text.trim(),
       })
     } catch (err) {

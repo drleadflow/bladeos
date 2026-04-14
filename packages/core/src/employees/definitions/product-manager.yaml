@@ -3,7 +3,46 @@ name: Product Manager
 title: Product Manager
 department: engineering
 icon: "\U0001F4CB"
+pillar: business
 objective: "Ship the right features at the right time."
+system_prompt:
+  coach: ""
+  operator: ""
+personality:
+  archetype: operator
+  tone: analytical
+model_preference: standard
+max_budget_per_run: 1.0
+allowed_tools:
+  - recall_memory
+  - save_memory
+  - web_search
+  - read_file
+  - list_files
+onboarding_questions: []
+scorecard_metrics: []
+proactive_behaviors: []
+suggested_actions: []
+tool_integrations: []
+skill_assignments: []
+escalation_policy:
+  escalate_to: chief-of-staff
+  conditions:
+    - trigger: blocked
+      action: handoff
+    - trigger: confidence_low
+      action: pause_and_ask
+    - trigger: budget_exceeded
+      action: notify
+handoff_rules:
+  - condition: "Technical implementation details or code review needed"
+    target: engineering-manager
+    priority: medium
+  - condition: "Growth or acquisition strategy question"
+    target: growth-lead
+    priority: low
+manager: chief-of-staff
+memory_scope: shared
 frameworks:
   - name: Value Equation
     purpose: Prioritize features by customer value and execution cost.
@@ -24,35 +63,6 @@ frameworks:
       - "Map the customer journey"
       - "Identify the weakest stage"
       - "Fix the bottleneck before adding scope"
-personality:
-  archetype: operator
-  tone: analytical
-model_preference: standard
-max_budget_per_run: 1.0
-allowed_tools:
-  - recall_memory
-  - save_memory
-  - web_search
-  - read_file
-  - list_files
-escalation_policy:
-  escalate_to: chief-of-staff
-  conditions:
-    - trigger: blocked
-      action: handoff
-    - trigger: confidence_low
-      action: pause_and_ask
-    - trigger: budget_exceeded
-      action: notify
-handoff_rules:
-  - condition: "Technical implementation details or code review needed"
-    target: engineering-manager
-    priority: medium
-  - condition: "Growth or acquisition strategy question"
-    target: growth-lead
-    priority: low
-manager: chief-of-staff
-memory_scope: shared
 kpis:
   - id: feature-delivery-rate
     name: Feature Delivery Rate

@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server'
 import { initializeDb, messages } from '@blade/db'
-import { createConversationEngine, WebSSEAdapter } from '@blade/conversation'
+import { createConversationEngine, WebSSEAdapter, createSkillResolver } from '@blade/conversation'
 import { createExecutionAPI, loadPersonality, retrieveRelevant } from '@blade/core'
 import { logger } from '@blade/shared'
 import { requireAuth, unauthorizedResponse } from '@/lib/auth'
@@ -20,6 +20,7 @@ const conversationEngine = createConversationEngine(executionApi, {
       })
       .join('\n')
   },
+  resolveSkillPrompt: createSkillResolver(),
 })
 const webAdapter = new WebSSEAdapter()
 
@@ -70,6 +71,10 @@ export async function POST(req: NextRequest): Promise<Response> {
         { success: false, error: 'message is required and must be a string' },
         { status: 400 }
       )
+    }
+
+    if (message.length > 32_000) {
+      return Response.json({ success: false, error: 'Message too long' }, { status: 400 })
     }
 
     initializeDb()

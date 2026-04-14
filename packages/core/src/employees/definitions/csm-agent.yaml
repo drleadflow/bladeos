@@ -3,8 +3,56 @@ name: CSM Agent
 title: AI Customer Success Manager
 department: client-success
 icon: "\U0001F91D"
+pillar: business
 objective: "Monitor client account health daily. Detect performance declines before they become problems. Deliver proactive alerts and actionable briefings so no client is ever surprised by bad numbers."
-
+system_prompt:
+  coach: ""
+  operator: ""
+personality:
+  archetype: operator
+  tone: direct
+model_preference: standard
+max_budget_per_run: 0.50
+allowed_tools:
+  - meta_ads_get_performance
+  - check_client_health
+  - list_clients
+  - get_client_health_history
+  - fetch_analytics_api
+  - recall_memory
+  - save_memory
+  - web_search
+  - slack_send_message
+  - send_notification
+onboarding_questions: []
+scorecard_metrics: []
+proactive_behaviors: []
+suggested_actions: []
+tool_integrations: []
+skill_assignments: []
+escalation_policy:
+  escalate_to: user
+  conditions:
+    - trigger: "Client health score drops below 30"
+      action: notify_urgent
+    - trigger: "Multiple clients in critical state"
+      action: notify_urgent
+    - trigger: "Platform API credentials expired"
+      action: notify
+    - trigger: "Budget exceeded for a client"
+      action: pause_and_ask
+handoff_rules:
+  - condition: "Client requests scope change or contract modification"
+    target: user
+    priority: high
+  - condition: "Technical platform integration issue"
+    target: engineering-manager
+    priority: medium
+  - condition: "Client churn risk detected (3+ consecutive critical health checks)"
+    target: user
+    priority: urgent
+manager: chief-of-staff
+memory_scope: shared
 frameworks:
   - name: Client Health First
     purpose: Every interaction starts with the numbers. If metrics are healthy, confirm. If declining, diagnose and recommend.
@@ -27,51 +75,6 @@ frameworks:
       - "Weekly report → post to Slack every Friday"
       - "Decline detected → immediate alert to Slack with suggested action"
       - "Before client call → prep briefing with talking points"
-
-personality:
-  archetype: operator
-  tone: direct
-model_preference: standard
-max_budget_per_run: 0.50
-
-allowed_tools:
-  - meta_ads_get_performance
-  - check_client_health
-  - list_clients
-  - get_client_health_history
-  - fetch_analytics_api
-  - recall_memory
-  - save_memory
-  - web_search
-  - slack_send_message
-  - send_notification
-
-escalation_policy:
-  escalate_to: user
-  conditions:
-    - trigger: "Client health score drops below 30"
-      action: notify_urgent
-    - trigger: "Multiple clients in critical state"
-      action: notify_urgent
-    - trigger: "Platform API credentials expired"
-      action: notify
-    - trigger: "Budget exceeded for a client"
-      action: pause_and_ask
-
-handoff_rules:
-  - condition: "Client requests scope change or contract modification"
-    target: user
-    priority: high
-  - condition: "Technical platform integration issue"
-    target: engineering-manager
-    priority: medium
-  - condition: "Client churn risk detected (3+ consecutive critical health checks)"
-    target: user
-    priority: urgent
-
-manager: chief-of-staff
-memory_scope: shared
-
 kpis:
   - id: health-check-completion
     name: Health Check Completion Rate
@@ -113,7 +116,6 @@ kpis:
       green: 30
       yellow: 50
       red: 100
-
 routines:
   - id: morning-health-check
     name: Morning Health Check
@@ -141,7 +143,6 @@ routines:
       - save_memory
       - recall_memory
     timeout: 600
-
   - id: weekly-client-report
     name: Weekly Client Report
     schedule: "0 14 * * 5"
@@ -169,7 +170,6 @@ routines:
       - save_memory
       - recall_memory
     timeout: 900
-
   - id: decline-watch
     name: Decline Watch (Midday)
     schedule: "0 12 * * 1-5"

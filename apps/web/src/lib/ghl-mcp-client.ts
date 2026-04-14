@@ -347,7 +347,12 @@ export { callTool }
 // Firebase agency access (e.g., MDW Aesthetics)
 
 const GHL_INTERNAL_API = 'https://services.leadconnectorhq.com'
-const FIREBASE_API_KEY = 'AIzaSyB_w3vXmsI7WeQtrIOkjR6xTRVN5uOieiE'
+
+function getFirebaseApiKey(): string {
+  const key = process.env.GHL_FIREBASE_API_KEY
+  if (!key) throw new Error('GHL_FIREBASE_API_KEY not configured')
+  return key
+}
 
 let cachedFirebaseToken: string | null = null
 let firebaseTokenExpiry = 0
@@ -362,7 +367,7 @@ async function getFirebaseToken(): Promise<string | null> {
 
   try {
     const res = await fetch(
-      `https://securetoken.googleapis.com/v1/token?key=${FIREBASE_API_KEY}`,
+      `https://securetoken.googleapis.com/v1/token?key=${getFirebaseApiKey()}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },

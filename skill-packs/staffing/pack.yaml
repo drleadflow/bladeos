@@ -1,0 +1,56 @@
+name: staffing
+display_name: Staffing Agency Pack
+version: 1
+vertical: staffing
+description: "Pre-loaded domain knowledge for staffing and recruitment agencies. Covers candidate sourcing, job posting, client management, placement tracking, and interview preparation."
+
+employee_skill_map:
+  closer: [candidate-scorer, interview-prep]
+  sdr: [candidate-scorer, job-posting-writer]
+  growth-lead: [job-posting-writer, client-intake]
+  csm-agent: [placement-tracker, client-intake]
+  chief-of-staff: [placement-tracker]
+  nurture-engine: [candidate-scorer]
+  support-lead: [placement-tracker]
+
+seed_memories:
+  - type: fact
+    content: "Staffing industry average placement fee is 20-25% of first-year salary for permanent placements. Temp staffing margins are typically 25-50% markup on hourly bill rate."
+    tags: [staffing, pricing, industry]
+    confidence: 0.95
+  - type: fact
+    content: "Speed-to-submit is the #1 competitive advantage in staffing. The first agency to submit qualified candidates wins 70%+ of placements."
+    tags: [staffing, operations, competitive]
+    confidence: 0.95
+  - type: fact
+    content: "Key staffing KPIs: fill rate (target >85%), time-to-fill (target <14 days for temp, <30 for perm), submittal-to-interview ratio (target 3:1), interview-to-placement ratio (target 3:1)."
+    tags: [staffing, kpis, metrics]
+    confidence: 0.95
+  - type: fact
+    content: "Candidate falloff prevention: confirm start date 48h before, send first-day logistics email, check in at end of day 1, day 3, and week 1. 60% of falloffs happen in the first week."
+    tags: [staffing, retention, candidate]
+    confidence: 0.9
+  - type: fact
+    content: "Staffing sales cycle: cold outreach → discovery call → job order → candidate submittal → client interview → offer → placement. Average 2-4 week cycle for temp, 4-8 weeks for perm."
+    tags: [staffing, sales, pipeline]
+    confidence: 0.9
+  - type: fact
+    content: "Top staffing niches by margin: healthcare (35-50%), IT/tech (30-45%), finance/accounting (25-40%), light industrial (20-35%), administrative (20-30%)."
+    tags: [staffing, industry, niches]
+    confidence: 0.85
+  - type: fact
+    content: "Client health signals in staffing: response time to submittals, interview feedback speed, offer acceptance rate, extension rate for temps, repeat job orders. A healthy client has 3+ active job orders."
+    tags: [staffing, client, health]
+    confidence: 0.9
+  - type: fact
+    content: "Staffing compliance essentials: W-2 vs 1099 classification, I-9 verification within 3 days, background check completion before start, workers comp insurance, ACA compliance for temps working 30+ hours."
+    tags: [staffing, compliance, legal]
+    confidence: 0.95
+
+sops:
+  - file: sops/new-client-intake.md
+    assigned_to: [csm-agent, chief-of-staff, closer]
+  - file: sops/candidate-screening.md
+    assigned_to: [sdr, closer, nurture-engine]
+  - file: sops/placement-process.md
+    assigned_to: [csm-agent, support-lead, ops-manager]

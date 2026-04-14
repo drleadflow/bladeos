@@ -28,6 +28,9 @@ export { startTelegramBot } from './integrations/index.js'
 export { generateSkillFromJob } from './skills/skill-generator.js'
 export { selectSkill } from './skills/skill-selector.js'
 export { loadSkillsFromDir, loadFullSkill, getSkillPrompt, getSkillByName } from './skills/skill-loader.js'
+export { installSkillPack, loadSkillPack, listAvailablePacks, getEmployeeSkillPrompts } from './skills/skill-pack-loader.js'
+export { detectFeedback, saveFeedbackAsMemory } from './skills/feedback-detector.js'
+export type { FeedbackSignal } from './skills/feedback-detector.js'
 
 // Cron
 export { startScheduler, stopScheduler, loadCronsFromFile } from './cron/index.js'
@@ -52,8 +55,24 @@ export {
 } from './employees/yaml-loader.js'
 export type {
   Archetype, Pillar, OnboardingQuestion, ScorecardMetric, ProactiveBehavior,
+  ToolIntegration, Framework, KpiDefinition, RoutineDefinition, EscalationPolicy, HandoffRule,
   EmployeeDefinition, ActiveEmployee, ScorecardEntry, Notification, HandoffRequest,
 } from './employees/index.js'
+
+// Onboarding
+export {
+  createSession,
+  advanceState,
+  getQuestionPrompt,
+  executeInstall,
+  executeInstantSetup,
+  getSuggestedPrompts,
+  isSkipSignal,
+  getCoreEmployeeIds,
+  getAvailableVerticals,
+  detectVertical,
+} from './onboarding/onboarding-service.js'
+export type { OnboardingSession, OnboardingState } from './onboarding/onboarding-service.js'
 
 // Webhooks
 export {

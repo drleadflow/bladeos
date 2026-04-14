@@ -822,6 +822,50 @@ export const contentSchedule = pgTable('content_schedule', {
   index('idx_content_schedule_status').on(table.status, table.scheduledAt),
 ])
 
+// ── 0017: Skill Packs ──────────────────────────────────────────
+
+export const skillPacks = pgTable('skill_packs', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull().unique(),
+  displayName: text('display_name').notNull(),
+  version: integer('version').notNull().default(1),
+  vertical: text('vertical').notNull(),
+  description: text('description').notNull().default(''),
+  active: integer('active').notNull().default(1),
+  installedAt: text('installed_at').notNull().default(sql`now()`),
+})
+
+export const employeeSkills = pgTable('employee_skills', {
+  id: text('id').primaryKey(),
+  employeeId: text('employee_id').notNull(),
+  skillName: text('skill_name').notNull(),
+  source: text('source').notNull().default('pack'),
+  packName: text('pack_name'),
+  createdAt: text('created_at').notNull().default(sql`now()`),
+}, (table) => [
+  uniqueIndex('idx_employee_skills_unique').on(table.employeeId, table.skillName),
+  index('idx_employee_skills_employee').on(table.employeeId),
+  index('idx_employee_skills_skill').on(table.skillName),
+])
+
+// ── 0018: Onboarding Sessions ──────────────────────────────────
+
+export const onboardingSessions = pgTable('onboarding_sessions', {
+  id: text('id').primaryKey(),
+  channel: text('channel').notNull(),
+  channelId: text('channel_id').notNull(),
+  state: text('state').notNull().default('welcome'),
+  vertical: text('vertical'),
+  selectedEmployees: text('selected_employees').default('[]'),
+  answers: text('answers').default('{}'),
+  currentEmployeeIndex: integer('current_employee_index').notNull().default(0),
+  currentQuestionIndex: integer('current_question_index').notNull().default(0),
+  createdAt: text('created_at').notNull().default(sql`now()`),
+  completedAt: text('completed_at'),
+}, (table) => [
+  index('idx_onboarding_channel').on(table.channel, table.channelId),
+])
+
 // ── Relations ───────────────────────────────────────────────────
 
 export const conversationsRelations = relations(conversations, ({ many }) => ({

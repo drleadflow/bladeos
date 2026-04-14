@@ -8,6 +8,7 @@
  * summarization fallback.
  */
 
+import { join } from 'node:path'
 import type {
   ExecutionAPI,
   AgentStreamEvent,
@@ -19,6 +20,7 @@ import type {
   AgentMessage,
   AgentLoopResult,
 } from '@blade/core'
+import { detectFeedback, saveFeedbackAsMemory } from '@blade/core'
 import { conversations, messages, costEntries, activityEvents, channelLinks } from '@blade/db'
 import { loadConfig, logger } from '@blade/shared'
 import { buildSystemPrompt } from './context-builder.js'
@@ -31,6 +33,8 @@ export interface ConversationEngineOptions {
   getEmployeePrompt?: (employeeId: string) => string | undefined
   /** Get the allowed tools for an employee. Optional — used for policy enforcement. */
   getEmployeeTools?: (employeeId: string) => readonly string[] | undefined
+  /** Resolve a skill prompt for a message + employee. Returns the skill system_prompt or undefined. */
+  resolveSkillPrompt?: (message: string, employeeId?: string) => string | undefined
 }
 
 export interface ConversationEngine {
@@ -52,7 +56,7 @@ export function createConversationEngine(
   executionApi: ExecutionAPI,
   options: ConversationEngineOptions = {}
 ): ConversationEngine {
-  const { retrieveMemories, getEmployeePrompt, getEmployeeTools } = options
+  const { retrieveMemories, getEmployeePrompt, getEmployeeTools, resolveSkillPrompt } = options
 
   function extractChannelLinkId(request: ConversationRequest): string | undefined {
     const metadata = request.channelMetadata ?? {}
@@ -123,6 +127,14 @@ export function createConversationEngine(
         }
       }
 
+      // 3c. Detect and save user feedback signals
+      try {
+        const signal = detectFeedback(request.message)
+        if (signal) {
+          saveFeedbackAsMemory(signal, request.employeeId)
+        }
+      } catch { /* feedback detection is best-effort */ }
+
       // 4. Build system prompt
       let systemPrompt = request.systemPromptOverride ?? ''
       const employeePrompt = request.employeeId
@@ -151,6 +163,18 @@ export function createConversationEngine(
           `current message directly asks about one of these topics. Ignore irrelevant entries.]\n\n` +
           `${fenced}\n` +
           `</memory-context>`
+      }
+
+      // 4b. Inject matching skill prompt (from skill packs or global skills)
+      if (resolveSkillPrompt) {
+        try {
+          const skillPrompt = resolveSkillPrompt(request.message, request.employeeId)
+          if (skillPrompt) {
+            systemPrompt += `\n\n<active-skill>\n${skillPrompt}\n</active-skill>`
+          }
+        } catch {
+          logger.warn('ConversationEngine', 'Skill resolution failed, continuing without')
+        }
       }
 
       // 5. Resolve model config
@@ -275,6 +299,29 @@ export function createConversationEngine(
           const cost = executionApi.calculateCost(context.modelId, totalInputTokens, totalOutputTokens)
           costEntries.record({ ...cost, conversationId })
         } catch { /* DB may not be initialized */ }
+      }
+
+      // 11b. Fire-and-forget skill generation from successful conversations with tool use
+      if (finalResult.totalToolCalls >= 2) {
+        const allToolCalls = finalResult.turns.flatMap(t => t.toolCalls)
+        const toolNames = [...new Set(allToolCalls.map((tc: { toolName: string }) => tc.toolName))]
+        import('@blade/core').then(({ generateSkillFromJob, loadSkillsFromDir }) => {
+          const existingSkills = (() => {
+            try { return loadSkillsFromDir(join(process.cwd(), 'skills')) }
+            catch { return [] }
+          })()
+          generateSkillFromJob(
+            request.message.slice(0, 200),
+            responseText.slice(0, 500),
+            toolNames,
+            true,
+            existingSkills
+          ).catch((err: unknown) => {
+            logger.warn('ConversationEngine', `Skill generation failed: ${err instanceof Error ? err.message : String(err)}`)
+          })
+        }).catch((err: unknown) => {
+          logger.warn('ConversationEngine', `Skill generation import failed: ${err instanceof Error ? err.message : String(err)}`)
+        })
       }
 
       yield {
