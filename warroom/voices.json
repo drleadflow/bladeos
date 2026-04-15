@@ -1,0 +1,37 @@
+{
+  "chief-of-staff": {
+    "gemini_voice": "Charon",
+    "cartesia_voice_id": "a0e99841-438c-4a64-b679-ae501e7d6091",
+    "elevenlabs_voice_id": "21m00Tcm4TlvDq8ikWAM",
+    "name": "Charon / British Male (informative, confident)",
+    "label": "Main"
+  },
+  "sdr": {
+    "gemini_voice": "Aoede",
+    "cartesia_voice_id": "a0e99841-438c-4a64-b679-ae501e7d6091",
+    "elevenlabs_voice_id": "EXAVITQu4vr4xnSDxMaL",
+    "name": "Aoede / American Male (breezy, warm)",
+    "label": "SDR"
+  },
+  "growth-lead": {
+    "gemini_voice": "Kore",
+    "cartesia_voice_id": "a0e99841-438c-4a64-b679-ae501e7d6091",
+    "elevenlabs_voice_id": "ErXwobaYiN019PkySvjV",
+    "name": "Kore / American Female (firm, analytical)",
+    "label": "Growth"
+  },
+  "csm-agent": {
+    "gemini_voice": "Leda",
+    "cartesia_voice_id": "a0e99841-438c-4a64-b679-ae501e7d6091",
+    "elevenlabs_voice_id": "MF3mGyEYCl7XYWbV9V6O",
+    "name": "Leda / British Female (youthful, creative)",
+    "label": "CSM"
+  },
+  "ops-manager": {
+    "gemini_voice": "Alnilam",
+    "cartesia_voice_id": "a0e99841-438c-4a64-b679-ae501e7d6091",
+    "elevenlabs_voice_id": "pNInz6obpgDQGcFmaJgB",
+    "name": "Alnilam / American Male (firm, direct)",
+    "label": "Ops"
+  }
+}

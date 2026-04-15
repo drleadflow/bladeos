@@ -1,0 +1,3 @@
+# Blade War Room — Python dependencies
+pipecat-ai[google,websocket,silero]==0.0.108
+python-dotenv>=1.0.0
