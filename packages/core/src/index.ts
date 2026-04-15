@@ -98,6 +98,14 @@ export { textToSpeech } from './voice/index.js'
 export type { TextToSpeechOptions } from './voice/index.js'
 export { speechToText } from './voice/index.js'
 export type { SpeechToTextOptions } from './voice/index.js'
+export { elevenLabsTTS } from './voice/index.js'
+export { synthesizeSpeech, AGENT_VOICES } from './voice/index.js'
+export type { AgentVoiceConfig } from './voice/index.js'
+export {
+  createWarRoomSession, getWarRoomSession, setActiveAgent,
+  getSessionTranscript, processVoiceTurn, destroyWarRoomSession,
+} from './voice/index.js'
+export type { WarRoomTurn, WarRoomSession } from './voice/index.js'
 
 // RAG
 export { ingestDocument, searchDocuments, listDocuments, deleteDocument } from './rag/index.js'
