@@ -20,6 +20,14 @@ export { extractLearnings, extractJobLearnings, buildMemoryAugmentedPrompt } fro
 export { processPRFeedback, checkPendingPRFeedback } from './learning/pr-feedback.js'
 export { retrieveRelevant } from './memory/retriever.js'
 export type { RankedMemory } from './memory/retriever.js'
+export { startDecayScheduler, stopDecayScheduler, runDecayCycle } from './memory/decay-scheduler.js'
+export type { DecayCycleResult } from './memory/decay-scheduler.js'
+export { classifyImportance, classifyAndUpdate } from './memory/importance-classifier.js'
+export type { ImportanceLevel } from './memory/importance-classifier.js'
+export { startConsolidationScheduler, stopConsolidationScheduler, runConsolidation } from './memory/consolidation-engine.js'
+export type { ConsolidationResult } from './memory/consolidation-engine.js'
+export { retrieveScoped } from './memory/scoped-retriever.js'
+export { autoAssignMission } from './missions/mission-router.js'
 
 // Integrations
 export { startTelegramBot } from './integrations/index.js'

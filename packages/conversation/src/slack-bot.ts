@@ -15,7 +15,6 @@ import { initializeDb, activityEvents } from '@blade/db'
 import {
   createExecutionAPI,
   loadPersonality,
-  retrieveRelevant,
 } from '@blade/core'
 import { logger } from '@blade/shared'
 import { createConversationEngine } from './engine.js'
@@ -47,14 +46,9 @@ const activeChannelReplies = new Map<string, Promise<void>>()
 const executionApi = createExecutionAPI()
 const conversationEngine = createConversationEngine(executionApi, {
   retrieveMemories: async (query: string) => {
-    const ranked = retrieveRelevant(query, 8)
-    if (ranked.length === 0) return ''
-    return ranked
-      .map((memory, index) => {
-        const tags = memory.tags.length > 0 ? ` [tags: ${memory.tags.join(', ')}]` : ''
-        return `${index + 1}. (${memory.type}) ${memory.content}${tags}`
-      })
-      .join('\n')
+    const { buildMemoryAugmentedPrompt } = await import('@blade/core')
+    const memoryBlock = buildMemoryAugmentedPrompt('', query)
+    return memoryBlock
   },
   resolveSkillPrompt: createSkillResolver(),
 })

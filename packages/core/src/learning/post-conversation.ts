@@ -1,6 +1,7 @@
 import type { AgentMessage, ToolCallResult, MemoryType } from '../types.js'
 import { callModel, resolveSmartModelConfig } from '../model-provider.js'
 import { memoryStore } from '../memory/memory-store.js'
+import { classifyAndUpdate } from '../memory/importance-classifier.js'
 import { logger } from '@blade/shared'
 
 interface ExtractedLearning {
@@ -167,12 +168,14 @@ function saveOrReinforce(learning: ExtractedLearning, source: string): void {
     memoryStore.reinforce(duplicate.id)
     logger.debug('Learning', `Reinforced existing memory ${duplicate.id}`)
   } else {
-    memoryStore.save(
+    const { id } = memoryStore.save(
       learning.content,
       learning.type as MemoryType,
       learning.tags,
       `conversation:${source}`
     )
+    // Fire-and-forget importance classification
+    classifyAndUpdate(id, learning.content, learning.type, learning.tags)
     logger.debug('Learning', `Saved new ${learning.type} memory`)
   }
 }

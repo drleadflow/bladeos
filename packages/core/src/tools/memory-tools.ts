@@ -1,5 +1,6 @@
 import { registerTool } from '../tool-registry.js'
 import type { ToolCallResult, ExecutionContext } from '../types.js'
+import { classifyAndUpdate } from '../memory/importance-classifier.js'
 import { logger } from '@blade/shared'
 
 // ============================================================
@@ -96,6 +97,9 @@ registerTool(
       source: context.conversationId,
     })
 
+    // Fire-and-forget: classify importance and update confidence asynchronously
+    classifyAndUpdate(id, content, type, tags)
+
     return {
       toolUseId: '',
       toolName: 'save_memory',
@@ -103,6 +107,121 @@ registerTool(
       success: true,
       data: { id },
       display: `Saved memory: "${content.slice(0, 80)}${content.length > 80 ? '...' : ''}"`,
+      durationMs: 0,
+      timestamp: new Date().toISOString(),
+    }
+  }
+)
+
+// ============================================================
+// PIN MEMORY
+// ============================================================
+
+registerTool(
+  {
+    name: 'pin_memory',
+    description: 'Pin an important memory so it is always available in context and never decays. Use for critical facts like business name, user identity, key preferences, or essential procedures.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        id: {
+          type: 'string',
+          description: 'The ID of the memory to pin. Use recall_memory first to find the ID.',
+        },
+      },
+      required: ['id'],
+    },
+    category: 'memory',
+  },
+  async (input: Record<string, unknown>, _context: ExecutionContext): Promise<ToolCallResult> => {
+    const { memories } = await import('@blade/db')
+    const id = input.id as string
+
+    memories.setPinned(id, true)
+
+    return {
+      toolUseId: '',
+      toolName: 'pin_memory',
+      input,
+      success: true,
+      data: { id, pinned: true },
+      display: `Pinned memory ${id}. It will always be injected into context and never decay.`,
+      durationMs: 0,
+      timestamp: new Date().toISOString(),
+    }
+  }
+)
+
+// ============================================================
+// UNPIN MEMORY
+// ============================================================
+
+registerTool(
+  {
+    name: 'unpin_memory',
+    description: 'Unpin a memory so it returns to normal decay behavior.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        id: {
+          type: 'string',
+          description: 'The ID of the memory to unpin.',
+        },
+      },
+      required: ['id'],
+    },
+    category: 'memory',
+  },
+  async (input: Record<string, unknown>, _context: ExecutionContext): Promise<ToolCallResult> => {
+    const { memories } = await import('@blade/db')
+    const id = input.id as string
+
+    memories.setPinned(id, false)
+
+    return {
+      toolUseId: '',
+      toolName: 'unpin_memory',
+      input,
+      success: true,
+      data: { id, pinned: false },
+      display: `Unpinned memory ${id}. It will now follow normal decay behavior.`,
+      durationMs: 0,
+      timestamp: new Date().toISOString(),
+    }
+  }
+)
+
+// ============================================================
+// LIST PINNED MEMORIES
+// ============================================================
+
+registerTool(
+  {
+    name: 'list_pinned',
+    description: 'List all pinned memories — critical facts that are always available and never decay.',
+    input_schema: {
+      type: 'object',
+      properties: {},
+      required: [],
+    },
+    category: 'memory',
+  },
+  async (_input: Record<string, unknown>, _context: ExecutionContext): Promise<ToolCallResult> => {
+    const { memories } = await import('@blade/db')
+
+    const pinned = memories.getPinned()
+
+    const display = pinned.length > 0
+      ? `${pinned.length} pinned memories:\n${(pinned as { id: string; content: string; importance: string }[]).map((m, i) => `${i + 1}. [${m.importance}] ${m.content}`).join('\n')}`
+      : 'No pinned memories. Use pin_memory to pin critical facts.'
+
+    return {
+      toolUseId: '',
+      toolName: 'list_pinned',
+      input: {},
+      success: true,
+      data: pinned,
+      display,
       durationMs: 0,
       timestamp: new Date().toISOString(),
     }

@@ -2,7 +2,7 @@ import { join, dirname } from 'node:path'
 import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { initializeDb } from '@blade/db'
-import { startMonitorScheduler, loadEmployeeDefinitions, RoutineScheduler, createExecutionAPI } from '@blade/core'
+import { startMonitorScheduler, loadEmployeeDefinitions, RoutineScheduler, createExecutionAPI, startDecayScheduler, startConsolidationScheduler } from '@blade/core'
 import { createConversationEngine } from '@blade/conversation'
 
 const __filename = fileURLToPath(import.meta.url)
@@ -54,6 +54,22 @@ export function ensureServerInit(): void {
     console.log('[server-init] Routine scheduler started')
   } catch (err) {
     console.error('[server-init] Routine scheduler failed:', err)
+  }
+
+  // Start memory decay scheduler (weekly decay + prune)
+  try {
+    startDecayScheduler()
+    console.log('[server-init] Memory decay scheduler started')
+  } catch (err) {
+    console.error('[server-init] Decay scheduler failed:', err)
+  }
+
+  // Start memory consolidation scheduler (Gemini insights every 12h)
+  try {
+    startConsolidationScheduler()
+    console.log('[server-init] Memory consolidation scheduler started')
+  } catch (err) {
+    console.error('[server-init] Consolidation scheduler failed:', err)
   }
 
   // Scheduled lead sync — pull new GHL messages every hour via MCP

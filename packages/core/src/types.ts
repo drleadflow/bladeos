@@ -27,7 +27,7 @@ export interface ToolDefinition {
   name: string
   description: string
   input_schema: ToolInputSchema
-  category: 'coding' | 'memory' | 'web' | 'system' | 'custom'
+  category: 'coding' | 'memory' | 'web' | 'system' | 'custom' | 'mission'
   requiresDocker?: boolean
 }
 
