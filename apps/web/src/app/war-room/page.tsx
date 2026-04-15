@@ -80,7 +80,7 @@ export default function WarRoomPage() {
 
     try {
       // Connect WebSocket to Pipecat server
-      const wsUrl = `ws://${window.location.hostname}:7860`
+      const wsUrl = `ws://${window.location.hostname}:8765`
       const ws = new WebSocket(wsUrl)
       wsRef.current = ws
 

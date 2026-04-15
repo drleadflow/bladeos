@@ -27,10 +27,9 @@ from pipecat.frames.frames import (
 )
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
-from pipecat.pipeline.task import PipelineTask, PipelineParams
-from pipecat.transports.services.helpers.daily_rest import DailyRESTHelper
-from pipecat.services.google import GoogleLLMService
-from pipecat.transports.websocket.websocket_server import (
+from pipecat.pipeline.task import PipelineTask
+from pipecat.services.google.llm import GoogleLLMService
+from pipecat.transports.websocket.server import (
     WebsocketServerTransport,
     WebsocketServerParams,
 )
@@ -235,10 +234,9 @@ async def main():
 
     # LLM — Gemini Live with native audio
     llm = GoogleLLMService(
-        model="gemini-2.0-flash-live-001",
         api_key=os.environ.get("GEMINI_API_KEY", ""),
+        model="gemini-2.0-flash-live-001",
         system_instruction=system_prompt,
-        voice=gemini_voice,
         tools=TOOLS,
     )
 
@@ -255,9 +253,7 @@ async def main():
         transport.output(),
     ])
 
-    task = PipelineTask(pipeline, PipelineParams(
-        allow_interruptions=True,
-    ))
+    task = PipelineTask(pipeline)
 
     # Seed context when client connects
     @transport.event_handler("on_client_connected")

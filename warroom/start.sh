@@ -32,7 +32,7 @@ echo "Starting Blade War Room..."
 echo "  Mode: ${WARROOM_MODE:-live}"
 echo "  Port: ${WARROOM_PORT:-7860}"
 echo ""
-echo "Connect at: ws://localhost:${WARROOM_PORT:-7860}"
+echo "Connect at: ws://localhost:8765 (Pipecat default)"
 echo "Dashboard:  http://localhost:3000/war-room"
 echo ""
 
