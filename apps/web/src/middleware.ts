@@ -48,16 +48,35 @@ function getClientIp(request: NextRequest): string {
   return request.ip ?? request.nextUrl.pathname
 }
 
+const CORS_HEADERS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  'Access-Control-Max-Age': '86400',
+}
+
+function addCorsHeaders(response: NextResponse): NextResponse {
+  for (const [key, value] of Object.entries(CORS_HEADERS)) {
+    response.headers.set(key, value)
+  }
+  return response
+}
+
 export function middleware(request: NextRequest) {
-  // Only rate limit API routes
+  // Only handle API routes
   if (!request.nextUrl.pathname.startsWith('/api/')) {
     return NextResponse.next()
+  }
+
+  // Handle CORS preflight
+  if (request.method === 'OPTIONS') {
+    return new NextResponse(null, { status: 204, headers: CORS_HEADERS })
   }
 
   // Exempt health check from rate limiting
   const path = request.nextUrl.pathname
   if (path === '/api/health') {
-    return NextResponse.next()
+    return addCorsHeaders(NextResponse.next())
   }
 
   const clientIp = getClientIp(request)
@@ -66,9 +85,9 @@ export function middleware(request: NextRequest) {
   if (path.startsWith('/api/auth/')) {
     const authLimit = checkRateLimit(clientIp, 10, 60_000) // 10 requests per minute
     if (!authLimit.allowed) {
-      return new NextResponse('Too many auth attempts', { status: 429 })
+      return addCorsHeaders(new NextResponse('Too many auth attempts', { status: 429 }))
     }
-    return NextResponse.next()
+    return addCorsHeaders(NextResponse.next())
   }
 
   const ip = getClientIp(request)
@@ -86,7 +105,7 @@ export function middleware(request: NextRequest) {
   if (entry.timestamps.length >= limit) {
     const oldestInWindow = Math.min(...entry.timestamps)
     const retryAfter = Math.ceil((oldestInWindow + windowMs - now) / 1000)
-    return new NextResponse(
+    return addCorsHeaders(new NextResponse(
       JSON.stringify({ error: 'Too many requests', retryAfter }),
       {
         status: 429,
@@ -97,7 +116,7 @@ export function middleware(request: NextRequest) {
           'X-RateLimit-Remaining': '0',
         }
       }
-    )
+    ))
   }
 
   entry.timestamps.push(now)
@@ -106,7 +125,7 @@ export function middleware(request: NextRequest) {
   const response = NextResponse.next()
   response.headers.set('X-RateLimit-Limit', String(limit))
   response.headers.set('X-RateLimit-Remaining', String(limit - entry.timestamps.length))
-  return response
+  return addCorsHeaders(response)
 }
 
 export const config = {
