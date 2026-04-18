@@ -268,12 +268,19 @@ export const api = {
 
   // intelligence
   routingStats: () => apiFetch<RoutingStats>("/api/routing/stats"),
-  routingEpisodes: (limit = 20) =>
-    apiFetch<RoutingEpisode[]>(`/api/routing/episodes?limit=${limit}`),
-  routingQValues: (taskType?: string) =>
-    apiFetch<QValue[]>(`/api/routing/q-values${taskType ? `?taskType=${taskType}` : ""}`),
+  routingEpisodes: async (limit = 20) => {
+    const res = await apiFetch<{ episodes: RoutingEpisode[] } | RoutingEpisode[]>(`/api/routing/episodes?limit=${limit}`);
+    return Array.isArray(res) ? res : (res?.episodes ?? []);
+  },
+  routingQValues: async (taskType?: string) => {
+    const res = await apiFetch<{ qValues: QValue[] } | QValue[]>(`/api/routing/q-values${taskType ? `?taskType=${taskType}` : ""}`);
+    return Array.isArray(res) ? res : (res?.qValues ?? []);
+  },
 
-  autopilotBatches: () => apiFetch<BatchRun[]>("/api/autopilot/batches"),
+  autopilotBatches: async () => {
+    const res = await apiFetch<{ batches: BatchRun[] } | BatchRun[]>("/api/autopilot/batches");
+    return Array.isArray(res) ? res : (res?.batches ?? []);
+  },
   createBatch: (body: {
     name: string;
     maxConcurrent?: number;
@@ -291,14 +298,18 @@ export const api = {
     }),
 
   securityStats: () => apiFetch<SecurityStats>("/api/security/stats"),
-  securityEvents: (limit = 50) =>
-    apiFetch<SecurityEvent[]>(`/api/security/events?limit=${limit}`),
+  securityEvents: async (limit = 50) => {
+    const res = await apiFetch<{ events: SecurityEvent[] } | SecurityEvent[]>(`/api/security/events?limit=${limit}`);
+    return Array.isArray(res) ? res : (res?.events ?? []);
+  },
 
   reasoningStats: () => apiFetch<ReasoningStats>("/api/reasoning/stats"),
-  reasoningPatterns: (taskType?: string, limit = 20) =>
-    apiFetch<ReasoningPattern[]>(
+  reasoningPatterns: async (taskType?: string, limit = 20) => {
+    const res = await apiFetch<{ patterns: ReasoningPattern[] } | ReasoningPattern[]>(
       `/api/reasoning/patterns?limit=${limit}${taskType ? `&taskType=${taskType}` : ""}`,
-    ),
+    );
+    return Array.isArray(res) ? res : (res?.patterns ?? []);
+  },
 
   // goals
   goals: () => apiFetch<GoalProgress[]>("/api/goals"),
@@ -339,7 +350,10 @@ export const api = {
     apiFetch<ReportingEmployee[]>(`/api/reporting/employees?period=${period}`),
 
   // plugins
-  plugins: () => apiFetch<Plugin[]>("/api/plugins"),
+  plugins: async () => {
+    const res = await apiFetch<{ plugins: Plugin[] } | Plugin[]>("/api/plugins");
+    return Array.isArray(res) ? res : (res?.plugins ?? []);
+  },
   togglePlugin: (name: string, action: "enable" | "disable" | "reset") =>
     apiFetch<Plugin>("/api/plugins", { method: "POST", body: JSON.stringify({ name, action }) }),
 };

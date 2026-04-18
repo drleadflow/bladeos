@@ -8,155 +8,155 @@
 // You should NOT make any changes in this file as it will be overwritten.
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
-import { Route as rootRouteImport } from './routes/__root'
-import { Route as ReportingRouteImport } from './routes/reporting'
-import { Route as PluginsRouteImport } from './routes/plugins'
-import { Route as MissionsRouteImport } from './routes/missions'
-import { Route as MemoryRouteImport } from './routes/memory'
-import { Route as IntelRouteImport } from './routes/intel'
-import { Route as GoalsRouteImport } from './routes/goals'
-import { Route as EscalationRouteImport } from './routes/escalation'
-import { Route as DispatchRouteImport } from './routes/dispatch'
-import { Route as CouncilRouteImport } from './routes/council'
-import { Route as CalendarRouteImport } from './routes/calendar'
-import { Route as IndexRouteImport } from './routes/index'
+import { Route as rootRouteImport } from "./routes/__root"
+import { Route as ReportingRouteImport } from "./routes/reporting"
+import { Route as PluginsRouteImport } from "./routes/plugins"
+import { Route as MissionsRouteImport } from "./routes/missions"
+import { Route as MemoryRouteImport } from "./routes/memory"
+import { Route as IntelRouteImport } from "./routes/intel"
+import { Route as GoalsRouteImport } from "./routes/goals"
+import { Route as EscalationRouteImport } from "./routes/escalation"
+import { Route as DispatchRouteImport } from "./routes/dispatch"
+import { Route as CouncilRouteImport } from "./routes/council"
+import { Route as CalendarRouteImport } from "./routes/calendar"
+import { Route as IndexRouteImport } from "./routes/index"
 
 const ReportingRoute = ReportingRouteImport.update({
-  id: '/reporting',
-  path: '/reporting',
+  id: "/reporting",
+  path: "/reporting",
   getParentRoute: () => rootRouteImport,
 } as any)
 const PluginsRoute = PluginsRouteImport.update({
-  id: '/plugins',
-  path: '/plugins',
+  id: "/plugins",
+  path: "/plugins",
   getParentRoute: () => rootRouteImport,
 } as any)
 const MissionsRoute = MissionsRouteImport.update({
-  id: '/missions',
-  path: '/missions',
+  id: "/missions",
+  path: "/missions",
   getParentRoute: () => rootRouteImport,
 } as any)
 const MemoryRoute = MemoryRouteImport.update({
-  id: '/memory',
-  path: '/memory',
+  id: "/memory",
+  path: "/memory",
   getParentRoute: () => rootRouteImport,
 } as any)
 const IntelRoute = IntelRouteImport.update({
-  id: '/intel',
-  path: '/intel',
+  id: "/intel",
+  path: "/intel",
   getParentRoute: () => rootRouteImport,
 } as any)
 const GoalsRoute = GoalsRouteImport.update({
-  id: '/goals',
-  path: '/goals',
+  id: "/goals",
+  path: "/goals",
   getParentRoute: () => rootRouteImport,
 } as any)
 const EscalationRoute = EscalationRouteImport.update({
-  id: '/escalation',
-  path: '/escalation',
+  id: "/escalation",
+  path: "/escalation",
   getParentRoute: () => rootRouteImport,
 } as any)
 const DispatchRoute = DispatchRouteImport.update({
-  id: '/dispatch',
-  path: '/dispatch',
+  id: "/dispatch",
+  path: "/dispatch",
   getParentRoute: () => rootRouteImport,
 } as any)
 const CouncilRoute = CouncilRouteImport.update({
-  id: '/council',
-  path: '/council',
+  id: "/council",
+  path: "/council",
   getParentRoute: () => rootRouteImport,
 } as any)
 const CalendarRoute = CalendarRouteImport.update({
-  id: '/calendar',
-  path: '/calendar',
+  id: "/calendar",
+  path: "/calendar",
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
+  id: "/",
+  path: "/",
   getParentRoute: () => rootRouteImport,
 } as any)
 
 export interface FileRoutesByFullPath {
-  '/': typeof IndexRoute
-  '/calendar': typeof CalendarRoute
-  '/council': typeof CouncilRoute
-  '/dispatch': typeof DispatchRoute
-  '/escalation': typeof EscalationRoute
-  '/goals': typeof GoalsRoute
-  '/intel': typeof IntelRoute
-  '/memory': typeof MemoryRoute
-  '/missions': typeof MissionsRoute
-  '/plugins': typeof PluginsRoute
-  '/reporting': typeof ReportingRoute
+  "/": typeof IndexRoute
+  "/calendar": typeof CalendarRoute
+  "/council": typeof CouncilRoute
+  "/dispatch": typeof DispatchRoute
+  "/escalation": typeof EscalationRoute
+  "/goals": typeof GoalsRoute
+  "/intel": typeof IntelRoute
+  "/memory": typeof MemoryRoute
+  "/missions": typeof MissionsRoute
+  "/plugins": typeof PluginsRoute
+  "/reporting": typeof ReportingRoute
 }
 export interface FileRoutesByTo {
-  '/': typeof IndexRoute
-  '/calendar': typeof CalendarRoute
-  '/council': typeof CouncilRoute
-  '/dispatch': typeof DispatchRoute
-  '/escalation': typeof EscalationRoute
-  '/goals': typeof GoalsRoute
-  '/intel': typeof IntelRoute
-  '/memory': typeof MemoryRoute
-  '/missions': typeof MissionsRoute
-  '/plugins': typeof PluginsRoute
-  '/reporting': typeof ReportingRoute
+  "/": typeof IndexRoute
+  "/calendar": typeof CalendarRoute
+  "/council": typeof CouncilRoute
+  "/dispatch": typeof DispatchRoute
+  "/escalation": typeof EscalationRoute
+  "/goals": typeof GoalsRoute
+  "/intel": typeof IntelRoute
+  "/memory": typeof MemoryRoute
+  "/missions": typeof MissionsRoute
+  "/plugins": typeof PluginsRoute
+  "/reporting": typeof ReportingRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
-  '/': typeof IndexRoute
-  '/calendar': typeof CalendarRoute
-  '/council': typeof CouncilRoute
-  '/dispatch': typeof DispatchRoute
-  '/escalation': typeof EscalationRoute
-  '/goals': typeof GoalsRoute
-  '/intel': typeof IntelRoute
-  '/memory': typeof MemoryRoute
-  '/missions': typeof MissionsRoute
-  '/plugins': typeof PluginsRoute
-  '/reporting': typeof ReportingRoute
+  "/": typeof IndexRoute
+  "/calendar": typeof CalendarRoute
+  "/council": typeof CouncilRoute
+  "/dispatch": typeof DispatchRoute
+  "/escalation": typeof EscalationRoute
+  "/goals": typeof GoalsRoute
+  "/intel": typeof IntelRoute
+  "/memory": typeof MemoryRoute
+  "/missions": typeof MissionsRoute
+  "/plugins": typeof PluginsRoute
+  "/reporting": typeof ReportingRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
-    | '/'
-    | '/calendar'
-    | '/council'
-    | '/dispatch'
-    | '/escalation'
-    | '/goals'
-    | '/intel'
-    | '/memory'
-    | '/missions'
-    | '/plugins'
-    | '/reporting'
+    | "/"
+    | "/calendar"
+    | "/council"
+    | "/dispatch"
+    | "/escalation"
+    | "/goals"
+    | "/intel"
+    | "/memory"
+    | "/missions"
+    | "/plugins"
+    | "/reporting"
   fileRoutesByTo: FileRoutesByTo
   to:
-    | '/'
-    | '/calendar'
-    | '/council'
-    | '/dispatch'
-    | '/escalation'
-    | '/goals'
-    | '/intel'
-    | '/memory'
-    | '/missions'
-    | '/plugins'
-    | '/reporting'
+    | "/"
+    | "/calendar"
+    | "/council"
+    | "/dispatch"
+    | "/escalation"
+    | "/goals"
+    | "/intel"
+    | "/memory"
+    | "/missions"
+    | "/plugins"
+    | "/reporting"
   id:
-    | '__root__'
-    | '/'
-    | '/calendar'
-    | '/council'
-    | '/dispatch'
-    | '/escalation'
-    | '/goals'
-    | '/intel'
-    | '/memory'
-    | '/missions'
-    | '/plugins'
-    | '/reporting'
+    | "__root__"
+    | "/"
+    | "/calendar"
+    | "/council"
+    | "/dispatch"
+    | "/escalation"
+    | "/goals"
+    | "/intel"
+    | "/memory"
+    | "/missions"
+    | "/plugins"
+    | "/reporting"
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -173,82 +173,82 @@ export interface RootRouteChildren {
   ReportingRoute: typeof ReportingRoute
 }
 
-declare module '@tanstack/react-router' {
+declare module "@tanstack/react-router" {
   interface FileRoutesByPath {
-    '/reporting': {
-      id: '/reporting'
-      path: '/reporting'
-      fullPath: '/reporting'
+    "/reporting": {
+      id: "/reporting"
+      path: "/reporting"
+      fullPath: "/reporting"
       preLoaderRoute: typeof ReportingRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/plugins': {
-      id: '/plugins'
-      path: '/plugins'
-      fullPath: '/plugins'
+    "/plugins": {
+      id: "/plugins"
+      path: "/plugins"
+      fullPath: "/plugins"
       preLoaderRoute: typeof PluginsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/missions': {
-      id: '/missions'
-      path: '/missions'
-      fullPath: '/missions'
+    "/missions": {
+      id: "/missions"
+      path: "/missions"
+      fullPath: "/missions"
       preLoaderRoute: typeof MissionsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/memory': {
-      id: '/memory'
-      path: '/memory'
-      fullPath: '/memory'
+    "/memory": {
+      id: "/memory"
+      path: "/memory"
+      fullPath: "/memory"
       preLoaderRoute: typeof MemoryRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/intel': {
-      id: '/intel'
-      path: '/intel'
-      fullPath: '/intel'
+    "/intel": {
+      id: "/intel"
+      path: "/intel"
+      fullPath: "/intel"
       preLoaderRoute: typeof IntelRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/goals': {
-      id: '/goals'
-      path: '/goals'
-      fullPath: '/goals'
+    "/goals": {
+      id: "/goals"
+      path: "/goals"
+      fullPath: "/goals"
       preLoaderRoute: typeof GoalsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/escalation': {
-      id: '/escalation'
-      path: '/escalation'
-      fullPath: '/escalation'
+    "/escalation": {
+      id: "/escalation"
+      path: "/escalation"
+      fullPath: "/escalation"
       preLoaderRoute: typeof EscalationRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/dispatch': {
-      id: '/dispatch'
-      path: '/dispatch'
-      fullPath: '/dispatch'
+    "/dispatch": {
+      id: "/dispatch"
+      path: "/dispatch"
+      fullPath: "/dispatch"
       preLoaderRoute: typeof DispatchRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/council': {
-      id: '/council'
-      path: '/council'
-      fullPath: '/council'
+    "/council": {
+      id: "/council"
+      path: "/council"
+      fullPath: "/council"
       preLoaderRoute: typeof CouncilRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/calendar': {
-      id: '/calendar'
-      path: '/calendar'
-      fullPath: '/calendar'
+    "/calendar": {
+      id: "/calendar"
+      path: "/calendar"
+      fullPath: "/calendar"
       preLoaderRoute: typeof CalendarRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/': {
-      id: '/'
-      path: '/'
-      fullPath: '/'
+    "/": {
+      id: "/"
+      path: "/"
+      fullPath: "/"
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
@@ -271,12 +271,3 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { createStart } from '@tanstack/react-start'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-  }
-}
