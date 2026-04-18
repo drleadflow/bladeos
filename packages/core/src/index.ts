@@ -111,8 +111,10 @@ export {
   runSdkAgent, loadMcpServers,
   getSession, setSession, clearSession, clearAllSessions, getActiveSessionCount, buildSessionKey,
   runEmployeeWithSdk,
+  isSdkAvailable, resetSdkDetection,
+  executeEmployeeTask,
 } from './providers/index.js'
-export type { SdkRunOptions, SdkRunResult, SdkSessionState, EmployeeSdkOptions, EmployeeSdkResult } from './providers/index.js'
+export type { SdkRunOptions, SdkRunResult, SdkSessionState, EmployeeSdkOptions, EmployeeSdkResult, ExecuteEmployeeTaskResult } from './providers/index.js'
 
 // Security
 export { getSanitizedEnv } from './security/index.js'

@@ -19,3 +19,8 @@ export {
 
 export { runEmployeeWithSdk } from './sdk-execution.js'
 export type { EmployeeSdkOptions, EmployeeSdkResult } from './sdk-execution.js'
+
+export { isSdkAvailable, resetSdkDetection } from './sdk-detect.js'
+
+export { executeEmployeeTask } from './auto-executor.js'
+export type { ExecuteEmployeeTaskResult } from './auto-executor.js'
