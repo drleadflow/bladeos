@@ -10,6 +10,10 @@ export { runConversationReply, extractBestResponseText } from './chat/reply.js'
 export { registerTool, getTool, getAllToolDefinitions, getToolsByCategory, executeTool, clearRegistry, createToolScope, createFilteredScope, registerScopedTool, getScopedToolDefinitions, destroyToolScope } from './tool-registry.js'
 export { callModel, streamModel, resolveModelConfig, resolveSmartModelConfig } from './model-provider.js'
 export type { TaskComplexity } from './model-provider.js'
+export { analyzeComplexity } from './routing/complexity-analyzer.js'
+export type { ExtendedComplexity } from './routing/complexity-analyzer.js'
+export { autoRouteModel, recordModelFailure, recordModelSuccess, getConfigKey } from './routing/cost-router.js'
+export type { CostRouterResult } from './routing/cost-router.js'
 export { calculateCost, formatCost, isWithinBudget } from './cost-tracker.js'
 
 // Pipeline
@@ -18,8 +22,12 @@ export { runCodingPipeline } from './pipeline/index.js'
 // Learning & Memory
 export { extractLearnings, extractJobLearnings, buildMemoryAugmentedPrompt } from './learning/index.js'
 export { processPRFeedback, checkPendingPRFeedback } from './learning/pr-feedback.js'
-export { retrieveRelevant } from './memory/retriever.js'
+export { retrieveRelevant, retrieveRelevantAsync } from './memory/retriever.js'
 export type { RankedMemory } from './memory/retriever.js'
+export { generateEmbedding, cosineSimilarity } from './memory/embedder.js'
+export { loadVectorIndex, searchSimilar, addToIndex, removeFromIndex, getIndexSize } from './memory/vector-store.js'
+export { retrieveHybrid } from './memory/hybrid-retriever.js'
+export { processMemoryFeedback } from './memory/feedback-loop.js'
 export { startDecayScheduler, stopDecayScheduler, runDecayCycle } from './memory/decay-scheduler.js'
 export type { DecayCycleResult } from './memory/decay-scheduler.js'
 export { classifyImportance, classifyAndUpdate } from './memory/importance-classifier.js'
@@ -28,6 +36,14 @@ export { startConsolidationScheduler, stopConsolidationScheduler, runConsolidati
 export type { ConsolidationResult } from './memory/consolidation-engine.js'
 export { retrieveScoped } from './memory/scoped-retriever.js'
 export { autoAssignMission } from './missions/mission-router.js'
+export { classifyTask } from './routing/task-classifier.js'
+export type { TaskType } from './routing/task-classifier.js'
+export { selectEmployee, updateQValue, processOutcome } from './routing/q-router.js'
+export { onMissionComplete } from './routing/reward-hook.js'
+
+// Reasoning Bank
+export { storePattern, findSimilarPatterns, buildPatternContext, recordPatternOutcome } from './reasoning/index.js'
+export type { PatternMatch } from './reasoning/index.js'
 
 // Integrations
 export { startTelegramBot } from './integrations/index.js'
@@ -57,6 +73,7 @@ export {
   detectBuyerArchetype, detectMotivation, detectEmotionalState, getClarityCompass, getValueEquation,
   requestHandoff, getHandoffsForEmployee, acceptHandoff, completeHandoff, buildCollaborationContext, clearHandoffs,
   runProactiveBehavior, scheduleEmployeeBehaviors, stopEmployeeBehaviors,
+  logEmployeeActivity, getTeamActivity,
 } from './employees/index.js'
 export {
   loadEmployeeDefinitions, getEmployeeDefinition, getAllEmployeeDefinitions, clearDefinitionCache,
@@ -65,6 +82,7 @@ export type {
   Archetype, Pillar, OnboardingQuestion, ScorecardMetric, ProactiveBehavior,
   ToolIntegration, Framework, KpiDefinition, RoutineDefinition, EscalationPolicy, HandoffRule,
   EmployeeDefinition, ActiveEmployee, ScorecardEntry, Notification, HandoffRequest,
+  LogActivityParams,
 } from './employees/index.js'
 
 // Onboarding
@@ -90,6 +108,10 @@ export type { WebhookTrigger, WebhookResult } from './webhooks/index.js'
 
 // Security
 export { getSanitizedEnv } from './security/index.js'
+export { detectInjection, getInjectionPatternCount } from './security/index.js'
+export type { InjectionCheckResult } from './security/index.js'
+export { scanForSecrets, getSecretPatternCount } from './security/index.js'
+export type { ExfiltrationCheckResult } from './security/index.js'
 
 // Voice
 export { createVoiceRoom, generateParticipantToken } from './voice/index.js'
@@ -156,6 +178,22 @@ export type { EventChannel } from './utils/event-channel.js'
 // Job Queue
 export { JobQueue, getJobQueue } from './queue/job-queue.js'
 export type { QueuedJob, QueueJobStatus, JobQueueOptions } from './queue/job-queue.js'
+
+// Autopilot
+export { startBatch, stopBatch, cancelBatch, getActiveBatchIds, getBatchProgress, isBatchComplete, checkForStalledJobs } from './autopilot/index.js'
+export type { BatchRunnerOptions, BatchProgress, StallCheckResult } from './autopilot/index.js'
+
+// Plugins
+export {
+  installPlugin, uninstallPlugin, enablePlugin, disablePlugin, listPlugins, getPluginInfo,
+  loadPlugin, unloadPlugin, loadAllPlugins, getLoadedPlugins, isPluginLoaded,
+  fireBeforeToolCall, fireAfterToolCall, fireBeforeModelCall, fireAfterModelCall,
+  fireOnMemorySave, fireOnMissionAssigned, getRegisteredHookCount,
+} from './plugins/index.js'
+export type {
+  BladePlugin, BladeHookPlugin, BladeToolPlugin, BladeProviderPlugin, BladeWorkerPlugin,
+  AnyPlugin, PluginContext, PluginToolRegistration, PluginInfo,
+} from './plugins/index.js'
 
 // Types
 export type {

@@ -1,0 +1,6 @@
+export { classifyTask } from './task-classifier.js'
+export type { TaskType } from './task-classifier.js'
+export { analyzeComplexity } from './complexity-analyzer.js'
+export type { ExtendedComplexity } from './complexity-analyzer.js'
+export { autoRouteModel, recordModelFailure, recordModelSuccess, getConfigKey } from './cost-router.js'
+export type { CostRouterResult } from './cost-router.js'

@@ -1,4 +1,5 @@
 import { memoryStore } from './memory-store.js'
+import { retrieveHybrid } from './hybrid-retriever.js'
 
 export interface RankedMemory {
   id: string
@@ -84,5 +85,17 @@ export function retrieveRelevant(query: string, limit = 10): RankedMemory[] {
     return scored.slice(0, limit)
   } catch {
     return []
+  }
+}
+
+/**
+ * Enhanced retrieval: tries hybrid (FTS5 + vector) first,
+ * falls back to FTS5-only if embeddings are unavailable.
+ */
+export async function retrieveRelevantAsync(query: string, limit = 10): Promise<RankedMemory[]> {
+  try {
+    return await retrieveHybrid(query, limit)
+  } catch {
+    return retrieveRelevant(query, limit)
   }
 }

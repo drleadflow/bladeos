@@ -11,8 +11,12 @@ import type {
   ModelConfig,
 } from './types.js'
 import { callModel, streamModel, resolveModelConfig, resolveSmartModelConfigChain } from './model-provider.js'
-import { manageContext } from './context-manager.js'
+import { manageContext, estimateMessageTokens, getContextLimit } from './context-manager.js'
 import { executeTool } from './tool-registry.js'
+import { autoRouteModel } from './routing/cost-router.js'
+import { detectInjection } from './security/injection-detector.js'
+import { scanForSecrets } from './security/exfiltration-guard.js'
+import { fireBeforeToolCall, fireAfterToolCall, fireBeforeModelCall, fireAfterModelCall } from './plugins/hooks.js'
 import { calculateCost, isWithinBudget } from './cost-tracker.js'
 import { requiresApproval, requestApproval, waitForApproval } from './approval-checker.js'
 import { logger } from '@blade/shared'
@@ -185,9 +189,22 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
   const deadline = Date.now() + maxWallClockMs
 
   // Build provider fallback chain: primary config + alternatives
-  const fallbackChain: ModelConfig[] = context.modelConfig
-    ? [context.modelConfig]
-    : resolveSmartModelConfigChain('standard', { needsToolCalling: true })
+  // Auto-route based on message complexity if no explicit config
+  let fallbackChain: ModelConfig[]
+  if (context.modelConfig) {
+    fallbackChain = [context.modelConfig]
+  } else {
+    // Try auto-routing based on last user message complexity
+    const lastUserMsg = [...options.messages].reverse().find(m => m.role === 'user')
+    const messageText = lastUserMsg && typeof lastUserMsg.content === 'string' ? lastUserMsg.content : ''
+
+    if (messageText) {
+      const routeResult = autoRouteModel(messageText, { needsToolCalling: true })
+      fallbackChain = [routeResult.config, ...resolveSmartModelConfigChain(routeResult.detectedComplexity === 'acknowledgment' ? 'light' : routeResult.detectedComplexity, { needsToolCalling: true }).slice(1)]
+    } else {
+      fallbackChain = resolveSmartModelConfigChain('standard', { needsToolCalling: true })
+    }
+  }
   let modelConfig: ModelConfig = fallbackChain[0] ?? resolveModelConfig(context.modelId)
 
   if (!modelConfig.apiKey) {
@@ -205,6 +222,25 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
 
   // Track tool call history for stuck-loop detection
   const toolCallHistory: Array<{ name: string; input: string }> = []
+
+  // Injection check on the latest user message
+  const lastUserMessage = [...messages].reverse().find(m => m.role === 'user')
+  if (lastUserMessage) {
+    const userText = typeof lastUserMessage.content === 'string'
+      ? lastUserMessage.content
+      : lastUserMessage.content.filter(b => b.type === 'text').map(b => (b as { type: 'text'; text: string }).text).join(' ')
+
+    if (userText) {
+      const injectionResult = detectInjection(userText)
+      if (injectionResult.isInjection) {
+        logger.warn('AgentLoop', `Injection detected (score=${injectionResult.score.toFixed(2)}): ${injectionResult.matchedPatterns.join(', ')}`)
+        onError?.(new Error(`Potential prompt injection detected (severity: ${injectionResult.severity})`), 'injection_detected')
+        // Log but don't block (log+warn mode) — can be changed to block later
+      }
+    }
+  }
+
+  let turnsSinceMemorySave = 0
 
   for (let iteration = 0; iteration < maxIterations; iteration++) {
     // Wall-clock deadline check
@@ -227,12 +263,22 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
     // Manage context window before calling the model
     messages = await manageContext(messages, systemPrompt, modelConfig)
 
+    // Context window warning
+    const currentTokens = estimateMessageTokens(messages)
+    const contextLimit = getContextLimit(modelConfig.modelId)
+    const usage = currentTokens / contextLimit
+    if (usage > 0.75) {
+      logger.warn('AgentLoop', `Context window at ${Math.round(usage * 100)}% (${currentTokens}/${contextLimit} tokens)`)
+    }
+
     // Determine if we can use streaming for this provider
     const canStream = streaming && modelConfig.provider !== 'claude-cli'
 
     // Call model with classified error handling and retry logic
     let response
     let modelCallSucceeded = false
+
+    void fireBeforeModelCall(modelConfig.modelId, messages.length)
 
     for (let attempt = 0; attempt <= MAX_MODEL_RETRIES; attempt++) {
       try {
@@ -252,6 +298,7 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
           response = await callModel(modelConfig, systemPrompt, messages, tools)
         }
         modelCallSucceeded = true
+        void fireAfterModelCall(modelConfig.modelId, response!.inputTokens, response!.outputTokens)
         break
       } catch (err) {
         const error = err instanceof Error ? err : new Error(String(err))
@@ -345,6 +392,7 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
         onTextDelta?.(finalText)
       }
       onTurn?.(turn)
+      turnsSinceMemorySave++
       stopReason = 'end_turn'
       break
     }
@@ -440,11 +488,14 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
       }
 
       try {
-        return await withTimeout(
+        void fireBeforeToolCall(block.name, block.input)
+        const toolCallResult = await withTimeout(
           executeTool(block.name, block.id, block.input, context),
           toolTimeoutMs,
           `Tool "${block.name}"`,
         )
+        void fireAfterToolCall(block.name, toolCallResult.data, toolCallResult.durationMs)
+        return toolCallResult
       } catch (err) {
         const error = err instanceof Error ? err : new Error(String(err))
         const isTimeout = error.message.includes('timed out')
@@ -531,6 +582,19 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
     }
     turns.push(turn)
     onTurn?.(turn)
+    turnsSinceMemorySave++
+
+    // Memory nudge: after 5 turns without a memory save, inject a hint
+    if (turnsSinceMemorySave >= 5) {
+      const hasMemoryTool = turnToolCalls.some(tc => tc.toolName === 'save_memory' || tc.toolName === 'recall_memory')
+      if (!hasMemoryTool) {
+        // Don't inject a message - just add to the system awareness
+        // The nudge is a lightweight signal, not a forced tool call
+        logger.debug('AgentLoop', `Memory nudge: ${turnsSinceMemorySave} turns without memory save`)
+      } else {
+        turnsSinceMemorySave = 0
+      }
+    }
 
     // Append assistant message (with tool_use blocks) and tool results to history
     messages.push({ role: 'assistant', content: response!.content })
@@ -570,6 +634,16 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
     const { checkAchievements } = await import('./gamification/index.js')
     checkAchievements()
   } catch { /* ignore */ }
+
+  // Exfiltration guard: scan final response for leaked secrets
+  if (finalResponse) {
+    const exfilResult = scanForSecrets(finalResponse)
+    if (exfilResult.hasSecrets) {
+      logger.warn('AgentLoop', `Exfiltration guard: redacted ${exfilResult.redactionCount} secrets (${exfilResult.detectedTypes.join(', ')})`)
+      // Replace the final response with sanitized version
+      result.finalResponse = exfilResult.sanitizedText
+    }
+  }
 
   onComplete?.(result)
 

@@ -792,10 +792,11 @@ async function callGeminiCli(
 // SMART MODEL ROUTING
 // ============================================================
 
-export type TaskComplexity = 'light' | 'standard' | 'heavy' | 'large-context'
+export type TaskComplexity = 'light' | 'standard' | 'heavy' | 'large-context' | 'acknowledgment'
 
 /**
  * Resolve the best model config based on task complexity.
+ * - acknowledgment: simple ack/emoji → same as light (cheapest)
  * - light: memory extraction, skill generation, simple questions → OpenRouter (cheap)
  * - standard: normal chat, tool use → Claude subscription or OpenRouter
  * - heavy: coding pipeline, complex analysis → Claude subscription (best quality)
@@ -808,6 +809,10 @@ export function resolveSmartModelConfig(
   complexity: TaskComplexity = 'standard',
   options?: { needsToolCalling?: boolean }
 ): ModelConfig {
+  // Normalize acknowledgment → light for cheapest routing
+  const effective: Exclude<TaskComplexity, 'acknowledgment'> =
+    complexity === 'acknowledgment' ? 'light' : complexity
+
   const hasOpenRouter = !!process.env.OPENROUTER_API_KEY
   const hasOpenAI = !!process.env.OPENAI_API_KEY
   const hasClaudeCli = (process.env.ANTHROPIC_API_KEY ?? '').startsWith('sk-ant-oat01-')
@@ -815,7 +820,7 @@ export function resolveSmartModelConfig(
   const hasGemini = !!process.env.GEMINI_API_KEY
 
   // Large-context tasks: route to Gemini CLI (1M token context window)
-  if (complexity === 'large-context' && hasGemini) {
+  if (effective === 'large-context' && hasGemini) {
     return {
       provider: 'gemini-cli',
       modelId: 'gemini-2.5-flash',
@@ -830,7 +835,7 @@ export function resolveSmartModelConfig(
     if (hasOpenRouter) {
       return {
         provider: 'openrouter',
-        modelId: complexity === 'light'
+        modelId: effective === 'light'
           ? 'anthropic/claude-haiku-4.5'
           : 'anthropic/claude-sonnet-4',
         apiKey: process.env.OPENROUTER_API_KEY!,
@@ -840,7 +845,7 @@ export function resolveSmartModelConfig(
     if (hasAnthropicApi) {
       return {
         provider: 'anthropic',
-        modelId: complexity === 'light'
+        modelId: effective === 'light'
           ? 'claude-haiku-4-20250514'
           : 'claude-sonnet-4-20250514',
         apiKey: process.env.ANTHROPIC_API_KEY!,
@@ -849,7 +854,7 @@ export function resolveSmartModelConfig(
     if (hasOpenAI) {
       return {
         provider: 'openai',
-        modelId: complexity === 'light' ? 'gpt-4o-mini' : 'gpt-4o',
+        modelId: effective === 'light' ? 'gpt-4o-mini' : 'gpt-4o',
         apiKey: process.env.OPENAI_API_KEY!,
       }
     }
@@ -861,7 +866,7 @@ export function resolveSmartModelConfig(
   }
 
   // Light tasks: use cheapest available
-  if (complexity === 'light') {
+  if (effective === 'light') {
     if (hasOpenRouter) {
       return {
         provider: 'openrouter',
@@ -921,7 +926,8 @@ export function resolveSmartModelConfigChain(
   const hasOpenAI = !!process.env.OPENAI_API_KEY
   const hasAnthropicApi = !!(process.env.ANTHROPIC_API_KEY) && !(process.env.ANTHROPIC_API_KEY ?? '').startsWith('sk-ant-oat01-')
 
-  const modelForComplexity = complexity === 'light'
+  const isLightTier = complexity === 'light' || complexity === 'acknowledgment'
+  const modelForComplexity = isLightTier
     ? { anthropic: 'claude-haiku-4-20250514', openrouter: 'anthropic/claude-haiku-4.5', openai: 'gpt-4o-mini' }
     : { anthropic: 'claude-sonnet-4-20250514', openrouter: 'anthropic/claude-sonnet-4', openai: 'gpt-4o' }
 

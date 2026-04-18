@@ -1,1 +1,5 @@
 export { getSanitizedEnv } from './env-filter.js'
+export { detectInjection, getInjectionPatternCount } from './injection-detector.js'
+export type { InjectionCheckResult } from './injection-detector.js'
+export { scanForSecrets, getSecretPatternCount } from './exfiltration-guard.js'
+export type { ExfiltrationCheckResult } from './exfiltration-guard.js'

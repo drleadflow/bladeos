@@ -74,3 +74,7 @@ export {
   scheduleEmployeeBehaviors,
   stopEmployeeBehaviors,
 } from './proactive.js'
+
+// Activity Logger (Hive Mind)
+export { logEmployeeActivity, getTeamActivity } from './activity-logger.js'
+export type { LogActivityParams } from './activity-logger.js'

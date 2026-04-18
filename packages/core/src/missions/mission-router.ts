@@ -1,12 +1,13 @@
 /**
- * Mission Router — uses Gemini Flash to pick the best employee
- * for a given mission based on employee skills, title, and tools.
- *
- * Falls back to round-robin if Gemini is unavailable.
+ * Mission Router — uses Q-learning to pick the best employee
+ * for a given mission. Falls back to Gemini Flash on cold start,
+ * then round-robin if Gemini is unavailable.
  */
 
 import { employees, missions } from '@blade/db'
 import { logger } from '@blade/shared'
+import { classifyTask } from '../routing/task-classifier.js'
+import { selectEmployee, recordRoutingDecision } from '../routing/q-router.js'
 
 const ROUTING_PROMPT = `You are a task router for an AI workforce. Given a task description and a list of available employees with their titles and skills, pick the single best employee to handle this task.
 
@@ -23,14 +24,14 @@ interface EmployeeSummary {
 }
 
 /**
- * Auto-assign a mission to the best employee using Gemini Flash.
+ * Auto-assign a mission to the best employee.
+ * Tries Q-router first, falls back to Gemini on cold start, then least-busy.
  * Returns the assigned employee slug.
  */
 export async function autoAssignMission(missionId: string): Promise<string> {
   const mission = missions.get(missionId)
   if (!mission) throw new Error(`Mission ${missionId} not found`)
 
-  // Get active employees
   const allEmployees = employees.list() as unknown as (EmployeeSummary & { active: number })[]
   const activeEmployees = allEmployees.filter(e => e.active !== 0)
 
@@ -38,16 +39,30 @@ export async function autoAssignMission(missionId: string): Promise<string> {
     throw new Error('No active employees available for assignment')
   }
 
-  // Try Gemini Flash for smart routing
-  const bestSlug = await routeWithGemini(mission.title, mission.description ?? '', activeEmployees)
+  // Step 1: Classify the task
+  const taskType = classifyTask(mission.title, mission.description ?? '')
 
-  if (bestSlug) {
-    missions.assign(missionId, bestSlug)
-    logger.info('MissionRouter', `Auto-assigned mission "${mission.title}" to ${bestSlug}`)
-    return bestSlug
+  // Step 2: Try Q-learning router
+  const slugs = activeEmployees.map(e => e.slug)
+  const result = selectEmployee(taskType, slugs)
+
+  if (result.method !== 'cold_start') {
+    recordRoutingDecision(taskType, `${mission.title} ${mission.description ?? ''}`, result.employeeSlug, result.method, missionId)
+    missions.assign(missionId, result.employeeSlug)
+    logger.info('MissionRouter', `Q-routed mission "${mission.title}" to ${result.employeeSlug} (${result.method}, task_type=${taskType})`)
+    return result.employeeSlug
   }
 
-  // Fallback: assign to employee with fewest active missions
+  // Step 3: Cold start — fall back to Gemini
+  const geminiSlug = await routeWithGemini(mission.title, mission.description ?? '', activeEmployees)
+  if (geminiSlug) {
+    recordRoutingDecision(taskType, `${mission.title} ${mission.description ?? ''}`, geminiSlug, 'gemini_fallback', missionId)
+    missions.assign(missionId, geminiSlug)
+    logger.info('MissionRouter', `Gemini-routed mission "${mission.title}" to ${geminiSlug} (cold_start, task_type=${taskType})`)
+    return geminiSlug
+  }
+
+  // Step 4: Final fallback — least busy employee
   const missionCounts = missions.countByEmployee()
   const countMap = new Map(missionCounts.map(m => [m.assignedEmployee, m.count]))
 

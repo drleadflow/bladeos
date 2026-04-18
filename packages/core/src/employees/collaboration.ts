@@ -1,7 +1,7 @@
 import crypto from 'node:crypto'
 import { getEmployee } from './registry.js'
 import { logger } from '@blade/shared'
-import { handoffs as handoffRepo } from '@blade/db'
+import { handoffs as handoffRepo, activityEvents } from '@blade/db'
 
 export interface HandoffRequest {
   id: string
@@ -73,32 +73,87 @@ export function completeHandoff(handoffId: string): void {
 }
 
 export function buildCollaborationContext(employeeId: string): string {
-  const pendingHandoffs = getHandoffsForEmployee(employeeId)
+  const sections: string[] = []
 
-  if (pendingHandoffs.length === 0) {
-    return ''
+  const pendingHandoffs = getHandoffsForEmployee(employeeId)
+  if (pendingHandoffs.length > 0) {
+    const lines: string[] = [
+      '--- Pending Handoffs ---',
+      `You have ${pendingHandoffs.length} pending handoff(s) from other employees:`,
+      '',
+    ]
+
+    for (const handoff of pendingHandoffs) {
+      const from = getEmployee(handoff.fromEmployee)
+      const fromName = from ? from.name : handoff.fromEmployee
+
+      lines.push(`[${handoff.priority.toUpperCase()}] From ${fromName}:`)
+      lines.push(`  Reason: ${handoff.reason}`)
+      lines.push(`  Context: ${handoff.context}`)
+      lines.push(`  Received: ${handoff.createdAt}`)
+      lines.push('')
+    }
+
+    lines.push('Please address these handoffs as part of your response.')
+    sections.push(lines.join('\n'))
   }
 
+  const teamActivitySection = buildTeamActivitySection(employeeId)
+  if (teamActivitySection) {
+    sections.push(teamActivitySection)
+  }
+
+  return sections.join('\n\n')
+}
+
+function buildTeamActivitySection(currentEmployeeId: string): string | null {
+  const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()
+
+  const recentActivity = activityEvents.list({
+    since: twoHoursAgo,
+    limit: 20,
+  })
+
+  const teamActivity = recentActivity.filter(
+    event => event.actorType === 'employee' && event.actorId !== currentEmployeeId
+  )
+
+  if (teamActivity.length === 0) return null
+
   const lines: string[] = [
-    '--- Pending Handoffs ---',
-    `You have ${pendingHandoffs.length} pending handoff(s) from other employees:`,
+    '--- Team Activity (Hive Mind) ---',
+    'Recent activity from your teammates:',
     '',
   ]
 
-  for (const handoff of pendingHandoffs) {
-    const from = getEmployee(handoff.fromEmployee)
-    const fromName = from ? from.name : handoff.fromEmployee
+  const byEmployee = new Map<string, typeof teamActivity>()
+  for (const event of teamActivity) {
+    const existing = byEmployee.get(event.actorId) ?? []
+    byEmployee.set(event.actorId, [...existing, event])
+  }
 
-    lines.push(`[${handoff.priority.toUpperCase()}] From ${fromName}:`)
-    lines.push(`  Reason: ${handoff.reason}`)
-    lines.push(`  Context: ${handoff.context}`)
-    lines.push(`  Received: ${handoff.createdAt}`)
+  for (const [employeeSlug, events] of byEmployee) {
+    const employee = getEmployee(employeeSlug)
+    const name = employee ? employee.name : employeeSlug
+    lines.push(`\u{1F4E1} ${name}:`)
+
+    for (const event of events.slice(0, 3)) {
+      const timeAgo = getTimeAgo(event.createdAt)
+      lines.push(`  - [${timeAgo}] ${event.summary}`)
+    }
     lines.push('')
   }
 
-  lines.push('Please address these handoffs as part of your response.')
-
   return lines.join('\n')
+}
+
+function getTimeAgo(isoDate: string): string {
+  const diffMs = Date.now() - new Date(isoDate).getTime()
+  const diffMin = Math.round(diffMs / 60000)
+  if (diffMin < 1) return 'just now'
+  if (diffMin < 60) return `${diffMin}m ago`
+  const diffHours = Math.round(diffMin / 60)
+  return `${diffHours}h ago`
 }
 
 export function clearHandoffs(): void {

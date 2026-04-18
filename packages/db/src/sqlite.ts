@@ -35,7 +35,7 @@ export function initializeDb(dbPath?: string): Database.Database {
     )
   `)
 
-  const migrationFiles = ['0001_init.sql', '0002_employees.sql', '0003_documents.sql', '0004_gamification.sql', '0005_evolution.sql', '0006_workflow_runs.sql', '0007_control_plane.sql', '0008_worker_sessions.sql', '0009_channel_links.sql', '0010_job_evals.sql', '0011_client_accounts.sql', '0012_workspaces.sql', '0013_lead_tracking.sql', '0014_indexes.sql', '0015_auth.sql', '0016_content_studio.sql', '0017_skill_packs.sql', '0018_onboarding_sessions.sql', '0019_memory_overhaul.sql', '0020_missions.sql']
+  const migrationFiles = ['0001_init.sql', '0002_employees.sql', '0003_documents.sql', '0004_gamification.sql', '0005_evolution.sql', '0006_workflow_runs.sql', '0007_control_plane.sql', '0008_worker_sessions.sql', '0009_channel_links.sql', '0010_job_evals.sql', '0011_client_accounts.sql', '0012_workspaces.sql', '0013_lead_tracking.sql', '0014_indexes.sql', '0015_auth.sql', '0016_content_studio.sql', '0017_skill_packs.sql', '0018_onboarding_sessions.sql', '0019_memory_overhaul.sql', '0020_missions.sql', '0021_qlearning.sql', '0022_vector_embeddings.sql', '0023_autopilot.sql', '0024_plugins.sql', '0025_reasoning_bank.sql']
 
   const applied = new Set(
     (db.prepare('SELECT filename FROM schema_migrations').all() as { filename: string }[])
