@@ -139,6 +139,10 @@ export {
 } from './voice/index.js'
 export type { WarRoomTurn, WarRoomSession } from './voice/index.js'
 
+// Escalation
+export { evaluateAllRules, seedDefaultRules } from './escalation/index.js'
+export type { EvaluationResult } from './escalation/index.js'
+
 // RAG
 export { ingestDocument, searchDocuments, listDocuments, deleteDocument } from './rag/index.js'
 export type { Document, DocumentChunk } from './rag/index.js'
@@ -193,6 +197,10 @@ export type { QueuedJob, QueueJobStatus, JobQueueOptions } from './queue/job-que
 export { startBatch, stopBatch, cancelBatch, getActiveBatchIds, getBatchProgress, isBatchComplete, checkForStalledJobs } from './autopilot/index.js'
 export type { BatchRunnerOptions, BatchProgress, StallCheckResult } from './autopilot/index.js'
 
+// Goals
+export { getGoalsDashboard, recordAgentContribution } from './goals/index.js'
+export type { GoalProgress } from './goals/index.js'
+
 // Plugins
 export {
   installPlugin, uninstallPlugin, enablePlugin, disablePlugin, listPlugins, getPluginInfo,
@@ -204,6 +212,10 @@ export type {
   BladePlugin, BladeHookPlugin, BladeToolPlugin, BladeProviderPlugin, BladeWorkerPlugin,
   AnyPlugin, PluginContext, PluginToolRegistration, PluginInfo,
 } from './plugins/index.js'
+
+// Reporting
+export { getBusinessMetrics, getEmployeeOutcomes } from './reporting/index.js'
+export type { BusinessMetrics, EmployeeOutcomes } from './reporting/index.js'
 
 // Types
 export type {
