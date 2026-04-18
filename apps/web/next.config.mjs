@@ -7,6 +7,19 @@ const nextConfig = {
     serverComponentsExternalPackages: ['better-sqlite3', 'dockerode', 'docker-modem', 'ssh2', '@node-rs/argon2', 'bullmq', 'ioredis', '@aws-sdk/client-s3', '@aws-sdk/s3-request-presigner'],
     instrumentationHook: true,
   },
+  async headers() {
+    return [
+      {
+        source: '/api/:path*',
+        headers: [
+          { key: 'Access-Control-Allow-Origin', value: '*' },
+          { key: 'Access-Control-Allow-Methods', value: 'GET, POST, PATCH, DELETE, OPTIONS' },
+          { key: 'Access-Control-Allow-Headers', value: 'Content-Type, Authorization' },
+          { key: 'Access-Control-Max-Age', value: '86400' },
+        ],
+      },
+    ]
+  },
 };
 
 export default withSentryConfig(nextConfig, {
