@@ -809,6 +809,9 @@ export function resolveSmartModelConfig(
   complexity: TaskComplexity = 'standard',
   options?: { needsToolCalling?: boolean }
 ): ModelConfig {
+  // Note: For full Claude Code capabilities (MCP servers, skills, session resumption),
+  // use runSdkAgent() from './providers/claude-sdk.js' instead of callModel().
+
   // Normalize acknowledgment → light for cheapest routing
   const effective: Exclude<TaskComplexity, 'acknowledgment'> =
     complexity === 'acknowledgment' ? 'light' : complexity

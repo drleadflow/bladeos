@@ -106,6 +106,14 @@ export {
 } from './webhooks/index.js'
 export type { WebhookTrigger, WebhookResult } from './webhooks/index.js'
 
+// Claude Agent SDK
+export {
+  runSdkAgent, loadMcpServers,
+  getSession, setSession, clearSession, clearAllSessions, getActiveSessionCount, buildSessionKey,
+  runEmployeeWithSdk,
+} from './providers/index.js'
+export type { SdkRunOptions, SdkRunResult, SdkSessionState, EmployeeSdkOptions, EmployeeSdkResult } from './providers/index.js'
+
 // Security
 export { getSanitizedEnv } from './security/index.js'
 export { detectInjection, getInjectionPatternCount } from './security/index.js'

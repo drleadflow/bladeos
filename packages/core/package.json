@@ -43,11 +43,12 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.114",
     "@anthropic-ai/sdk": "^0.52.0",
-    "@google/generative-ai": "^0.21.0",
     "@blade/db": "*",
     "@blade/docker-runner": "*",
     "@blade/shared": "*",
+    "@google/generative-ai": "^0.21.0",
     "@slack/bolt": "^4.7.0",
     "js-yaml": "^4.1.0",
     "livekit-server-sdk": "^2.9.1",
