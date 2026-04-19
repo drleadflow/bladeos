@@ -1,12 +1,61 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Mic, MicOff, Square, Activity } from "lucide-react";
+import { LiveKitRoom, RoomAudioRenderer, useVoiceAssistant } from "@livekit/components-react";
+import "@livekit/components-styles";
 import { VoiceVisualizer } from "@/components/blade/VoiceVisualizer";
 import { Brackets } from "@/components/blade/Brackets";
 import { TickerNumber } from "@/components/blade/TickerNumber";
 import { useBladeStore } from "@/stores/blade-store";
+import { type VoiceState } from "@/stores/blade-store";
 import { useVoiceWS } from "@/hooks/use-voice-ws";
 import { deptColor, type Employee } from "@/lib/api";
+
+interface VoiceAgentUIProps {
+  dispatchTo: { name: string; color: string } | null;
+}
+
+/**
+ * Rendered inside a LiveKitRoom context.
+ * Uses useVoiceAssistant to get agent state and transcriptions,
+ * then maps them to Blade's VoiceState and transcript store.
+ */
+function VoiceAgentUI({ dispatchTo }: VoiceAgentUIProps) {
+  const { state, agentTranscriptions } = useVoiceAssistant();
+  const setVoiceState = useBladeStore((s) => s.setVoiceState);
+  const pushTranscript = useBladeStore((s) => s.pushTranscript);
+  const voiceState = useBladeStore((s) => s.voiceState);
+
+  // Map LiveKit agent state to Blade VoiceState
+  useEffect(() => {
+    const stateMap: Partial<Record<typeof state, VoiceState>> = {
+      listening: "listening",
+      thinking: "thinking",
+      speaking: "speaking",
+      idle: "idle",
+      disconnected: "idle",
+      failed: "idle",
+      initializing: "idle",
+      connecting: "idle",
+      "pre-connect-buffering": "listening",
+    };
+    const mapped = stateMap[state];
+    if (mapped !== undefined) {
+      setVoiceState(mapped);
+    }
+  }, [state, setVoiceState]);
+
+  // Push final agent transcriptions to store
+  useEffect(() => {
+    if (agentTranscriptions.length === 0) return;
+    const last = agentTranscriptions[agentTranscriptions.length - 1];
+    if (last.final) {
+      pushTranscript({ role: "agent", text: last.text });
+    }
+  }, [agentTranscriptions, pushTranscript]);
+
+  return <VoiceVisualizer state={voiceState} dispatchTo={dispatchTo} size={340} />;
+}
 
 function OrbitWidget({
   position, children,
@@ -43,8 +92,8 @@ export function CommandPage() {
   const activeEmployee = useBladeStore((s) => s.activeEmployee);
   const setVoiceState = useBladeStore((s) => s.setVoiceState);
 
-  // Always-on voice WS (mic gated by isMuted)
-  useVoiceWS(true);
+  // Always-on voice — fetches a LiveKit token on mount
+  const { token, roomName, livekitUrl } = useVoiceWS(true);
 
   const [sessionMs, setSessionMs] = useState(0);
   const startRef = useRef<number | null>(null);
@@ -170,11 +219,27 @@ export function CommandPage() {
 
         {/* Visualizer column */}
         <div className="relative z-10 flex flex-col items-center">
-          <VoiceVisualizer
-            state={voiceState}
-            dispatchTo={dispatchTo}
-            size={340}
-          />
+          {token && roomName ? (
+            <LiveKitRoom
+              serverUrl={livekitUrl}
+              token={token}
+              connect={true}
+              audio={true}
+              video={false}
+              onConnected={() => setVoiceState("listening")}
+              onDisconnected={() => setVoiceState("idle")}
+              style={{ background: "transparent", display: "contents" }}
+            >
+              <RoomAudioRenderer />
+              <VoiceAgentUI dispatchTo={dispatchTo} />
+            </LiveKitRoom>
+          ) : (
+            <VoiceVisualizer
+              state={voiceState}
+              dispatchTo={dispatchTo}
+              size={340}
+            />
+          )}
 
           <div className="mt-6 text-center">
             {(() => {

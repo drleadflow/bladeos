@@ -1,159 +1,79 @@
-import { useEffect, useRef } from "react";
-import { PipecatClient, RTVIEvent } from "@pipecat-ai/client-js";
-import { WebSocketTransport, WavMediaManager } from "@pipecat-ai/websocket-transport";
-import { VOICE_WS_URL } from "@/lib/api";
+import { useCallback, useEffect, useState } from "react";
 import { useBladeStore } from "@/stores/blade-store";
 
+const API_URL =
+  (import.meta.env.VITE_API_URL as string | undefined) ??
+  "https://blade-web-production.up.railway.app";
+const AUTH_TOKEN = import.meta.env.VITE_BLADE_TOKEN as string | undefined;
+const LIVEKIT_URL =
+  (import.meta.env.VITE_LIVEKIT_URL as string | undefined) ??
+  "wss://superagent-9p7whlmp.livekit.cloud";
+
+export interface VoiceWsReturn {
+  token: string | null;
+  roomName: string | null;
+  livekitUrl: string;
+}
+
 /**
- * Pipecat voice client using the RTVI protocol.
- * Connects to the Pipecat server via WebSocket transport,
- * captures mic audio, and plays agent responses.
+ * LiveKit voice agent hook.
+ * Fetches a short-lived token from the backend which lets the browser
+ * join a LiveKit room. The Blade voice agent auto-joins the same room
+ * on the server side and handles all audio.
+ *
+ * Returns the token and room URL needed by the LiveKitRoom component.
+ * All AudioContext / WebSocket management is handled by livekit-client.
  */
-export function useVoiceWS(enabled: boolean) {
-  const clientRef = useRef<PipecatClient | null>(null);
-  const micStreamRef = useRef<MediaStream | null>(null);
-  const audioCtxRef = useRef<AudioContext | null>(null);
-  const processorRef = useRef<ScriptProcessorNode | null>(null);
-
+export function useVoiceWS(enabled: boolean): VoiceWsReturn {
+  const [token, setToken] = useState<string | null>(null);
+  const [roomName, setRoomName] = useState<string | null>(null);
   const setVoiceState = useBladeStore((s) => s.setVoiceState);
-  const setActiveEmployee = useBladeStore((s) => s.setActiveEmployee);
-  const pushTranscript = useBladeStore((s) => s.pushTranscript);
-  const isMuted = useBladeStore((s) => s.isMuted);
-  const mutedRef = useRef(isMuted);
 
-  useEffect(() => {
-    mutedRef.current = isMuted;
-  }, [isMuted]);
+  const fetchToken = useCallback(async () => {
+    try {
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
+      if (AUTH_TOKEN) {
+        headers["Authorization"] = `Bearer ${AUTH_TOKEN}`;
+      }
 
-  useEffect(() => {
-    if (!enabled || typeof window === "undefined") return;
+      const res = await fetch(`${API_URL}/api/voice/token`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ roomName: `blade-voice-${Date.now()}` }),
+      });
 
-    let cancelled = false;
+      const json = (await res.json()) as {
+        success: boolean;
+        data?: { token: string; roomName: string };
+        error?: string;
+      };
 
-    const start = async () => {
-      try {
-        const mediaManager = new WavMediaManager(4096, 16000);
-        const transport = new WebSocketTransport({
-          wsUrl: VOICE_WS_URL,
-          mediaManager,
-          recorderSampleRate: 16000,
-          playerSampleRate: 24000,
-        });
-
-        const client = new PipecatClient({
-          transport,
-          enableMic: true,
-          enableCam: false,
-          callbacks: {
-            onConnected: () => {
-              if (!cancelled) setVoiceState("listening");
-              // Resume any suspended AudioContexts (browser autoplay policy)
-              document.querySelectorAll("audio").forEach((a) => a.play().catch(() => {}));
-              if (audioCtxRef.current?.state === "suspended") {
-                audioCtxRef.current.resume();
-              }
-            },
-            onDisconnected: () => {
-              if (!cancelled) setVoiceState("idle");
-            },
-          },
-        });
-
-        // Resume AudioContext on any user interaction (bypass autoplay policy)
-        const resumeAudio = () => {
-          if (audioCtxRef.current?.state === "suspended") {
-            audioCtxRef.current.resume();
-          }
-          // Also resume the transport's internal AudioContext if it exists
-          try {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const mm = (transport as any)._mediaManager;
-            if (mm?._audioContext?.state === "suspended") mm._audioContext.resume();
-            if (mm?._playbackAudioContext?.state === "suspended") mm._playbackAudioContext.resume();
-          } catch { /* ignore */ }
-        };
-        document.addEventListener("click", resumeAudio, { once: false });
-        document.addEventListener("keydown", resumeAudio, { once: false });
-
-        // Transcripts
-        client.on(RTVIEvent.BotTranscript, (data: { text: string }) => {
-          pushTranscript({ role: "agent", text: data.text });
-          setVoiceState("speaking");
-        });
-
-        client.on(RTVIEvent.UserTranscript, (data: { text: string; final: boolean }) => {
-          if (data.final) {
-            pushTranscript({ role: "you", text: data.text });
-          }
-        });
-
-        client.on(RTVIEvent.Error, (msg: unknown) => {
-          console.error("[voice] RTVI error:", msg);
-          setVoiceState("idle");
-        });
-
-        clientRef.current = client;
-        await client.connect();
-
-        if (cancelled) {
-          client.disconnect();
-          return;
-        }
-
-        // Direct mic capture — bypass WavMediaManager's recorder
-        // and feed audio directly into the transport's audio handler
-        const micStream = await navigator.mediaDevices.getUserMedia({
-          audio: { sampleRate: 16000, channelCount: 1, echoCancellation: true, noiseSuppression: true },
-        });
-
-        if (cancelled) {
-          micStream.getTracks().forEach((t) => t.stop());
-          client.disconnect();
-          return;
-        }
-
-        micStreamRef.current = micStream;
-        const audioCtx = new AudioContext({ sampleRate: 16000 });
-        audioCtxRef.current = audioCtx;
-        const source = audioCtx.createMediaStreamSource(micStream);
-        const processor = audioCtx.createScriptProcessor(4096, 1, 1);
-        processorRef.current = processor;
-
-        processor.onaudioprocess = (e) => {
-          if (mutedRef.current) return;
-          const float32 = e.inputBuffer.getChannelData(0);
-          const int16 = new Int16Array(float32.length);
-          for (let i = 0; i < float32.length; i++) {
-            const s = Math.max(-1, Math.min(1, float32[i]));
-            int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
-          }
-          // Feed Int16Array directly (not .buffer) — matches working War Room pattern
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          (transport as any).handleUserAudioStream(int16);
-        };
-
-        source.connect(processor);
-        processor.connect(audioCtx.destination);
-
+      if (json.success && json.data) {
+        setToken(json.data.token);
+        setRoomName(json.data.roomName);
         setVoiceState("listening");
-      } catch (err) {
-        console.error("[voice] connection failed:", err);
+      } else {
+        console.error("[voice] token error:", json.error);
         setVoiceState("idle");
       }
-    };
+    } catch (err: unknown) {
+      console.error("[voice] failed to get token:", err);
+      setVoiceState("idle");
+    }
+  }, [setVoiceState]);
 
-    start();
+  useEffect(() => {
+    if (!enabled) return;
+
+    fetchToken();
 
     return () => {
-      cancelled = true;
-      processorRef.current?.disconnect();
-      micStreamRef.current?.getTracks().forEach((t) => t.stop());
-      audioCtxRef.current?.close().catch(() => {});
-      clientRef.current?.disconnect();
-      clientRef.current = null;
-      micStreamRef.current = null;
-      audioCtxRef.current = null;
-      processorRef.current = null;
+      setToken(null);
+      setRoomName(null);
     };
-  }, [enabled, setVoiceState, setActiveEmployee, pushTranscript]);
+  }, [enabled, fetchToken]);
+
+  return { token, roomName, livekitUrl: LIVEKIT_URL };
 }
