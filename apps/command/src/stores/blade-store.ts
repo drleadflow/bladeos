@@ -140,7 +140,7 @@ export const useBladeStore = create<BladeState>((set, get) => ({
   plugins: [],
 
   voiceState: "listening",
-  isMuted: true, // start muted; user enables mic
+  isMuted: false, // always-on ambient — push to mute, not push to talk
   activeEmployee: null,
   transcript: [],
 

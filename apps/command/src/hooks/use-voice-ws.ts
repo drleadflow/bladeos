@@ -47,12 +47,33 @@ export function useVoiceWS(enabled: boolean) {
           callbacks: {
             onConnected: () => {
               if (!cancelled) setVoiceState("listening");
+              // Resume any suspended AudioContexts (browser autoplay policy)
+              document.querySelectorAll("audio").forEach((a) => a.play().catch(() => {}));
+              if (audioCtxRef.current?.state === "suspended") {
+                audioCtxRef.current.resume();
+              }
             },
             onDisconnected: () => {
               if (!cancelled) setVoiceState("idle");
             },
           },
         });
+
+        // Resume AudioContext on any user interaction (bypass autoplay policy)
+        const resumeAudio = () => {
+          if (audioCtxRef.current?.state === "suspended") {
+            audioCtxRef.current.resume();
+          }
+          // Also resume the transport's internal AudioContext if it exists
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const mm = (transport as any)._mediaManager;
+            if (mm?._audioContext?.state === "suspended") mm._audioContext.resume();
+            if (mm?._playbackAudioContext?.state === "suspended") mm._playbackAudioContext.resume();
+          } catch { /* ignore */ }
+        };
+        document.addEventListener("click", resumeAudio, { once: false });
+        document.addEventListener("keydown", resumeAudio, { once: false });
 
         // Transcripts
         client.on(RTVIEvent.BotTranscript, (data: { text: string }) => {
@@ -100,18 +121,15 @@ export function useVoiceWS(enabled: boolean) {
 
         processor.onaudioprocess = (e) => {
           if (mutedRef.current) return;
-          const f32 = e.inputBuffer.getChannelData(0);
-          const i16 = new Int16Array(f32.length);
-          for (let i = 0; i < f32.length; i++) {
-            i16[i] = Math.max(-32768, Math.min(32767, Math.round(f32[i] * 32767)));
+          const float32 = e.inputBuffer.getChannelData(0);
+          const int16 = new Int16Array(float32.length);
+          for (let i = 0; i < float32.length; i++) {
+            const s = Math.max(-1, Math.min(1, float32[i]));
+            int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
           }
-          try {
-            // Feed directly into transport's audio stream handler
-            (transport as unknown as { handleUserAudioStream: (data: ArrayBuffer) => void })
-              .handleUserAudioStream(i16.buffer);
-          } catch {
-            /* transport may not expose this method in all versions */
-          }
+          // Feed Int16Array directly (not .buffer) — matches working War Room pattern
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (transport as any).handleUserAudioStream(int16);
         };
 
         source.connect(processor);
