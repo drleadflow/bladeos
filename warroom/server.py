@@ -155,20 +155,43 @@ async def handle_answer_as_agent(function_name, tool_call_id, args, llm, context
 
 
 async def handle_delegate_to_agent(function_name, tool_call_id, args, llm, context, result_callback):
-    """Asynchronously delegate a task — fires and forgets."""
+    """Asynchronously delegate a task — creates a mission via CLI or API."""
     agent = args.get("agent", DEFAULT_AGENT)
     task = args.get("task", "")
 
     logger.info(f"delegate_to_agent: {agent} <- {task[:80]}")
 
-    # Fire and forget — spawn in background
     try:
         mission_cli = os.path.join(PROJECT_ROOT, "dist", "mission-cli.js")
-        if not os.path.exists(mission_cli):
-            # Fallback: create mission via the API
-            logger.info(f"delegate_to_agent: no mission-cli found, task logged for {agent}")
-
-        await result_callback({"ok": True, "agent": agent, "status": "delegated"})
+        if os.path.exists(mission_cli):
+            # Use CLI to create mission
+            proc = await asyncio.create_subprocess_exec(
+                NODE_BIN, mission_cli,
+                "create", "--agent", agent, "--title", task[:80], task,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=PROJECT_ROOT,
+            )
+            await proc.wait()
+            await result_callback({"ok": True, "agent": agent, "status": "delegated"})
+        else:
+            # Fallback: create mission via the backend API
+            import aiohttp
+            api_url = os.environ.get("BLADE_API_URL", "http://localhost:3000")
+            body = {
+                "title": task[:80],
+                "description": task,
+                "assigned_agent": agent.upper(),
+                "priority": 5,
+                "domain": "business",
+            }
+            async with aiohttp.ClientSession() as session:
+                async with session.post(f"{api_url}/api/missions", json=body) as resp:
+                    data = await resp.json()
+                    if data.get("success"):
+                        await result_callback({"ok": True, "agent": agent, "status": "delegated"})
+                    else:
+                        await result_callback({"ok": False, "error": data.get("error", "API error")})
     except Exception as e:
         logger.error(f"delegate_to_agent failed: {e}")
         await result_callback({"ok": False, "error": str(e)})
