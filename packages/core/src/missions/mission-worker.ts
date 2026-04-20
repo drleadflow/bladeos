@@ -1,6 +1,7 @@
 import { missions } from '@blade/db'
 import { logger } from '@blade/shared'
 import { executeMission } from './mission-executor.js'
+import { initDispatcher, dispatchMissionNotification } from './notification-dispatcher.js'
 import type { WorkerConfig } from './types.js'
 
 let workerInterval: ReturnType<typeof setInterval> | null = null
@@ -20,6 +21,11 @@ export function startMissionWorker(config: WorkerConfig): void {
   if (resetCount > 0) {
     logger.info('mission-worker', `Reset ${resetCount} stale live missions to queued`)
   }
+
+  initDispatcher({
+    notifyTelegram: config.notifyTelegram,
+    dashboardUrl: config.dashboardUrl,
+  })
 
   workerInterval = setInterval(() => {
     if (!isProcessing) {
@@ -62,9 +68,15 @@ async function processQueue(config: WorkerConfig): Promise<void> {
 
     logger.info('mission-worker', `Picked up mission "${mission.title}" for ${mission.assignedEmployee}`)
 
-    await config.notifyTelegram(
-      `[${mission.assignedEmployee}] Starting: ${mission.title}`
-    ).catch(() => {})
+    await dispatchMissionNotification({
+      eventType: 'mission_started',
+      missionId: mission.id,
+      title: mission.title,
+      summary: '',
+      priority: parsePriority(mission.priority),
+      assignedEmployee: mission.assignedEmployee!,
+      dashboardUrl: config.dashboardUrl,
+    })
 
     try {
       const result = await executeMission({
@@ -77,20 +89,27 @@ async function processQueue(config: WorkerConfig): Promise<void> {
       if (priority >= 6) {
         missions.setPendingReview(mission.id, resultJson, result.summary, result.costUsd)
 
-        const dashboardLink = `${config.dashboardUrl}/missions`
-        await config.notifyTelegram(
-          `[${mission.assignedEmployee}] Completed: ${mission.title}\n\n` +
-          `Summary: ${result.summary}\n\n` +
-          `Cost: $${result.costUsd.toFixed(4)} | Confidence: ${(result.confidence * 100).toFixed(0)}%\n\n` +
-          `Review: ${dashboardLink}`
-        ).catch(() => {})
+        await dispatchMissionNotification({
+          eventType: 'mission_pending_review',
+          missionId: mission.id,
+          title: mission.title,
+          summary: result.summary,
+          priority: parsePriority(mission.priority),
+          assignedEmployee: mission.assignedEmployee!,
+          dashboardUrl: config.dashboardUrl,
+        })
       } else {
         missions.complete(mission.id, resultJson, result.summary, result.costUsd)
 
-        await config.notifyTelegram(
-          `[${mission.assignedEmployee}] Done: ${mission.title} — ` +
-          `${result.artifacts.length} artifacts, $${result.costUsd.toFixed(4)} cost`
-        ).catch(() => {})
+        await dispatchMissionNotification({
+          eventType: 'mission_completed',
+          missionId: mission.id,
+          title: mission.title,
+          summary: `${result.artifacts.length} artifacts, $${result.costUsd.toFixed(4)} cost`,
+          priority: parsePriority(mission.priority),
+          assignedEmployee: mission.assignedEmployee!,
+          dashboardUrl: config.dashboardUrl,
+        })
       }
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : String(error)
@@ -98,9 +117,15 @@ async function processQueue(config: WorkerConfig): Promise<void> {
       const retryCount = missions.incrementRetry(mission.id)
       if (retryCount >= config.maxRetriesPerMission) {
         missions.fail(mission.id, msg)
-        await config.notifyTelegram(
-          `[${mission.assignedEmployee}] Failed: ${mission.title} — ${msg}`
-        ).catch(() => {})
+        await dispatchMissionNotification({
+          eventType: 'mission_failed',
+          missionId: mission.id,
+          title: mission.title,
+          summary: msg,
+          priority: parsePriority(mission.priority),
+          assignedEmployee: mission.assignedEmployee!,
+          dashboardUrl: config.dashboardUrl,
+        })
       } else {
         logger.warn('mission-worker', `Mission "${mission.title}" failed (attempt ${retryCount}/${config.maxRetriesPerMission}), requeueing`)
       }

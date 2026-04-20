@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect } from "react";
 import { Outlet } from "@tanstack/react-router";
 import { Toaster } from "sonner";
 import { TopBar } from "./TopBar";
+import { NotificationBanner } from "./NotificationBanner";
 import { LeftNav } from "./LeftNav";
 import { CommandBar } from "./CommandBar";
 import { ChatDrawer } from "./ChatDrawer";
@@ -39,6 +40,7 @@ export function AppShell() {
       />
 
       <TopBar />
+      <NotificationBanner />
       <div className="relative flex flex-1 overflow-hidden">
         <LeftNav />
         <main className="relative flex-1 overflow-hidden pb-14">

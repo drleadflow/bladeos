@@ -6,6 +6,7 @@ import { Panel } from "@/components/blade/Panel";
 import { TickerNumber } from "@/components/blade/TickerNumber";
 import { useBladeStore } from "@/stores/blade-store";
 import { deptColor, type Mission } from "@/lib/api";
+import { MissionDetailDrawer } from "./MissionDetailDrawer";
 
 function priorityColor(p: number) {
   if (p >= 8) return "#DC2626";
@@ -33,6 +34,8 @@ function MissionBlock({
   const styleByStatus: Record<string, React.CSSProperties> = {
     queued:   { background: "transparent", borderColor: `${c}66`, borderStyle: "dashed" },
     progress: { background: `${c}22`, borderColor: c, boxShadow: `0 0 12px ${c}55` },
+    review:   { background: "#22C55E22", borderColor: "#22C55E", boxShadow: "0 0 12px #22C55E55" },
+    input:    { background: "#F59E0B22", borderColor: "#F59E0B", boxShadow: "0 0 12px #F59E0B55" },
     done:     { background: `${c}11`, borderColor: `${c}55`, opacity: 0.7 },
     failed:   { background: "rgba(0,0,0,0.4)", borderColor: "#7F1D1D" },
   };
@@ -88,6 +91,8 @@ export function MissionsPage() {
   const employees = useBladeStore((s) => s.employees);
   const [open, setOpen] = useState<Mission | null>(null);
   const [showNew, setShowNew] = useState(false);
+  const [selectedMission, setSelectedMission] = useState<Mission | null>(null);
+  const fetchMissions = useBladeStore((s) => s.fetchMissions);
 
   const lanes = useMemo(() => {
     const byEmp = new Map<string, Mission[]>();
@@ -170,7 +175,7 @@ export function MissionsPage() {
                   <div className="font-mono text-[10px] uppercase text-white/20">— no active missions —</div>
                 ) : (
                   lane.missions.map((m) => (
-                    <MissionBlock key={m.id} m={m} color={lane.color} onClick={() => setOpen(m)} />
+                    <MissionBlock key={m.id} m={m} color={lane.color} onClick={() => setSelectedMission(m)} />
                   ))
                 )}
               </div>
@@ -223,6 +228,10 @@ export function MissionsPage() {
         </motion.div>
       )}
 
+      <MissionDetailDrawer
+        mission={selectedMission}
+        onClose={() => { setSelectedMission(null); fetchMissions(); }}
+      />
       {showNew && <NewMissionModal onClose={() => setShowNew(false)} />}
     </div>
   );
