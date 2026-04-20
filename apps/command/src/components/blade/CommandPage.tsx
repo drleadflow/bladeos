@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Mic, MicOff, Square, Activity } from "lucide-react";
-import { LiveKitRoom, RoomAudioRenderer, useVoiceAssistant } from "@livekit/components-react";
+import { LiveKitRoom, RoomAudioRenderer, useVoiceAssistant, useLocalParticipant, useStartAudio } from "@livekit/components-react";
 import "@livekit/components-styles";
 import { VoiceVisualizer } from "@/components/blade/VoiceVisualizer";
 import { Brackets } from "@/components/blade/Brackets";
@@ -22,9 +22,16 @@ interface VoiceAgentUIProps {
  */
 function VoiceAgentUI({ dispatchTo }: VoiceAgentUIProps) {
   const { state, agentTranscriptions } = useVoiceAssistant();
+  const { localParticipant } = useLocalParticipant();
   const setVoiceState = useBladeStore((s) => s.setVoiceState);
   const pushTranscript = useBladeStore((s) => s.pushTranscript);
   const voiceState = useBladeStore((s) => s.voiceState);
+  const isMuted = useBladeStore((s) => s.isMuted);
+
+  // Sync Zustand mute state → LiveKit local mic track
+  useEffect(() => {
+    localParticipant.setMicrophoneEnabled(!isMuted);
+  }, [isMuted, localParticipant]);
 
   // Map LiveKit agent state to Blade VoiceState
   useEffect(() => {
@@ -55,6 +62,26 @@ function VoiceAgentUI({ dispatchTo }: VoiceAgentUIProps) {
   }, [agentTranscriptions, pushTranscript]);
 
   return <VoiceVisualizer state={voiceState} dispatchTo={dispatchTo} size={340} />;
+}
+
+/**
+ * Handles browser autoplay policy — resumes AudioContext on first user click.
+ * Rendered inside LiveKitRoom context.
+ */
+function AudioPlaybackGuard() {
+  const { mergedProps, canPlayAudio } = useStartAudio({ props: {} });
+
+  useEffect(() => {
+    if (canPlayAudio) return;
+    // Auto-resume audio on any user interaction to unblock browser autoplay
+    const resume = () => {
+      mergedProps.onClick?.();
+    };
+    document.addEventListener("click", resume, { once: true });
+    return () => document.removeEventListener("click", resume);
+  }, [canPlayAudio, mergedProps]);
+
+  return null;
 }
 
 function OrbitWidget({
@@ -231,6 +258,7 @@ export function CommandPage() {
               style={{ background: "transparent", display: "contents" }}
             >
               <RoomAudioRenderer />
+              <AudioPlaybackGuard />
               <VoiceAgentUI dispatchTo={dispatchTo} />
             </LiveKitRoom>
           ) : (
@@ -243,9 +271,8 @@ export function CommandPage() {
 
           <div className="mt-6 text-center">
             {(() => {
-              const chief = employees.find((e) => e.department === "leadership") ?? employees.find((e) => e.slug === "chief-of-staff");
-              const chiefName = chief?.name ?? "BLADE";
-              const chiefTitle = chief?.title ?? "chief of staff";
+              const chiefName = "GEMINI";
+              const chiefTitle = "chief of staff";
               return (
                 <>
                   <div className="blade-tracked blade-text-glow font-mono text-3xl font-bold text-white">{chiefName.toUpperCase()}</div>

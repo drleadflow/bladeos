@@ -11,6 +11,7 @@ import { initializeDb } from '@blade/db'
 import { loadEmployeeDefinitions } from '@blade/core'
 import { startTelegramBot } from '@blade/conversation'
 import { logger } from '@blade/shared'
+import { startMissionWorker, stopMissionWorker } from '../../../packages/core/src/missions/index.js'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { existsSync } from 'node:fs'
@@ -56,9 +57,33 @@ async function main(): Promise<void> {
 
   logger.info('telegram', 'Bot is running. Press Ctrl+C to stop.')
 
+  // Start mission execution worker
+  const sendTelegramNotification = async (message: string): Promise<void> => {
+    try {
+      const chatId = allowedChatIds?.[0]
+      if (chatId) {
+        await bot.sendMessage(chatId, message)
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      logger.warn('telegram', `Failed to send mission notification: ${msg}`)
+    }
+  }
+
+  startMissionWorker({
+    pollIntervalMs: 10_000,
+    clarificationTimeoutMs: 5 * 60 * 1000,
+    maxRetriesPerMission: 3,
+    defaultCostBudget: 1.0,
+    dashboardUrl: process.env.DASHBOARD_URL ?? 'http://localhost:5174',
+    notifyTelegram: sendTelegramNotification,
+  })
+  logger.info('telegram', 'Mission worker started')
+
   // Graceful shutdown
   const shutdown = (): void => {
     logger.info('telegram', 'Shutting down...')
+    stopMissionWorker()
     bot.stopPolling()
     process.exit(0)
   }

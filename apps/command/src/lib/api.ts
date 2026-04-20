@@ -253,6 +253,18 @@ export const api = {
     apiFetch<Mission>("/api/missions", { method: "POST", body: JSON.stringify(body) }),
   updateMission: (id: string | number, body: { status: string }) =>
     apiFetch<Mission>(`/api/missions/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+  approveMission: (id: string) =>
+    apiFetch<Mission>(`/api/missions/${id}/approve`, { method: "POST" }),
+  rejectMission: (id: string, reason: string) =>
+    apiFetch<Mission>(`/api/missions/${id}/reject`, {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    }),
+  respondToMission: (id: string, response: string) =>
+    apiFetch<Mission>(`/api/missions/${id}/respond`, {
+      method: "POST",
+      body: JSON.stringify({ response }),
+    }),
   jobs: () => apiFetch<Job[]>("/api/jobs"),
   createJob: (body: { title: string; description?: string; repoUrl?: string }) =>
     apiFetch<Job>("/api/jobs", { method: "POST", body: JSON.stringify(body) }),

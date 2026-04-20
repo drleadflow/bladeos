@@ -78,6 +78,9 @@ interface BladeState {
   fetchReasoning: () => Promise<void>;
   fetchBatches: () => Promise<void>;
   createMission: (title: string, description: string, priority: number) => Promise<void>;
+  approveMission: (id: string) => Promise<void>;
+  rejectMission: (id: string, reason: string) => Promise<void>;
+  respondToMission: (id: string, response: string) => Promise<void>;
 
   fetchGoals: () => Promise<void>;
   fetchEscalation: () => Promise<void>;
@@ -213,6 +216,36 @@ export const useBladeStore = create<BladeState>((set, get) => ({
     } catch (e) {
       console.error("createMission failed", e);
       throw e;
+    }
+  },
+
+  approveMission: async (id) => {
+    try {
+      await api.approveMission(id)
+      await get().fetchMissions()
+    } catch (e) {
+      console.error("approveMission failed", e)
+      throw e
+    }
+  },
+
+  rejectMission: async (id, reason) => {
+    try {
+      await api.rejectMission(id, reason)
+      await get().fetchMissions()
+    } catch (e) {
+      console.error("rejectMission failed", e)
+      throw e
+    }
+  },
+
+  respondToMission: async (id, response) => {
+    try {
+      await api.respondToMission(id, response)
+      await get().fetchMissions()
+    } catch (e) {
+      console.error("respondToMission failed", e)
+      throw e
     }
   },
 

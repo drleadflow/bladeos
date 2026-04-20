@@ -14,10 +14,12 @@ function priorityColor(p: number) {
   return "#10B981";
 }
 
-function statusKey(m: Mission): "queued" | "progress" | "done" | "failed" {
+function statusKey(m: Mission): "queued" | "progress" | "review" | "input" | "done" | "failed" {
   const s = m.status?.toLowerCase() ?? "queued";
   if (s === "done" || s === "completed") return "done";
-  if (s === "failed" || s === "error") return "failed";
+  if (s === "failed" || s === "error" || s === "rejected") return "failed";
+  if (s === "pending_review") return "review";
+  if (s === "awaiting_input") return "input";
   if (s === "queued" || s === "pending") return "queued";
   return "progress";
 }

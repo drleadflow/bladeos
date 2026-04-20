@@ -19,6 +19,10 @@ export interface MissionRecord {
   completedAt: string | null
   createdAt: string
   updatedAt: string
+  questions: string | null
+  questionAskedAt: string | null
+  userResponse: string | null
+  retryCount: number
 }
 
 export interface CreateMissionParams {
@@ -38,7 +42,10 @@ const SELECT_FIELDS = `
   started_at as startedAt,
   completed_at as completedAt,
   created_at as createdAt,
-  updated_at as updatedAt
+  updated_at as updatedAt,
+  questions, question_asked_at as questionAskedAt,
+  user_response as userResponse,
+  retry_count as retryCount
 `
 
 export const missions = {
@@ -146,5 +153,76 @@ export const missions = {
        WHERE assigned_employee = ? AND status IN ('queued', 'live')
        ORDER BY priority, created_at`
     ).all(employeeSlug) as MissionRecord[]
+  },
+
+  getNextQueued(busyEmployees: string[]): MissionRecord | undefined {
+    const placeholders = busyEmployees.length > 0
+      ? busyEmployees.map(() => '?').join(',')
+      : "'__none__'"
+    const excludeClause = busyEmployees.length > 0
+      ? `AND assigned_employee NOT IN (${placeholders})`
+      : ''
+    return db().prepare(
+      `SELECT ${SELECT_FIELDS} FROM missions
+       WHERE status = 'queued' AND assigned_employee IS NOT NULL ${excludeClause}
+       ORDER BY
+         CASE priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END,
+         created_at ASC
+       LIMIT 1`
+    ).get(...busyEmployees) as MissionRecord | undefined
+  },
+
+  setAwaitingInput(id: string, question: string): void {
+    const ts = now()
+    db().prepare(
+      `UPDATE missions SET status = 'awaiting_input', questions = ?, question_asked_at = ?, updated_at = ? WHERE id = ?`
+    ).run(question, ts, ts, id)
+  },
+
+  submitResponse(id: string, response: string): void {
+    db().prepare(
+      `UPDATE missions SET status = 'live', user_response = ?, questions = NULL, question_asked_at = NULL, updated_at = ? WHERE id = ?`
+    ).run(response, now(), id)
+  },
+
+  setPendingReview(id: string, result: string, summary: string, costUsd: number): void {
+    const ts = now()
+    db().prepare(
+      `UPDATE missions SET status = 'pending_review', result = ?, result_summary = ?, cost_usd = ?, completed_at = ?, updated_at = ? WHERE id = ?`
+    ).run(result, summary, costUsd, ts, ts, id)
+  },
+
+  approve(id: string): void {
+    db().prepare(
+      `UPDATE missions SET status = 'done', updated_at = ? WHERE id = ?`
+    ).run(now(), id)
+  },
+
+  reject(id: string, reason: string): void {
+    db().prepare(
+      `UPDATE missions SET status = 'rejected', result = ?, updated_at = ? WHERE id = ?`
+    ).run(reason, now(), id)
+  },
+
+  incrementRetry(id: string): number {
+    db().prepare(
+      `UPDATE missions SET retry_count = retry_count + 1, status = 'queued', updated_at = ? WHERE id = ?`
+    ).run(now(), id)
+    const row = missions.get(id)
+    return row?.retryCount ?? 0
+  },
+
+  getAwaitingInput(): MissionRecord[] {
+    return db().prepare(
+      `SELECT ${SELECT_FIELDS} FROM missions WHERE status = 'awaiting_input' ORDER BY question_asked_at ASC`
+    ).all() as MissionRecord[]
+  },
+
+  resetStaleLive(olderThanMs: number): number {
+    const cutoff = new Date(Date.now() - olderThanMs).toISOString()
+    const result = db().prepare(
+      `UPDATE missions SET status = 'queued', updated_at = ? WHERE status = 'live' AND started_at < ?`
+    ).run(now(), cutoff)
+    return result.changes
   },
 }
