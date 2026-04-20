@@ -24,7 +24,7 @@ from livekit.agents import (
     cli,
     room_io,
 )
-from livekit.plugins import cartesia, google, silero
+from livekit.plugins import cartesia, deepgram, google, silero
 
 from tools import ALL_TOOLS
 
@@ -143,7 +143,11 @@ async def monitor_events(session: AgentSession) -> None:
         try:
             from tools import _api
             result = await _api("GET", "/api/timeline?limit=5")
+            if not isinstance(result, dict):
+                continue
             events = result.get("data", result.get("events", []))
+            if not isinstance(events, list):
+                continue
 
             for event in events:
                 event_id = str(event.get("id", ""))
@@ -179,9 +183,9 @@ async def entrypoint(ctx: JobContext) -> None:
 
     session = AgentSession(
         vad=ctx.proc.userdata["vad"],
-        stt=google.STT(
-            languages=["en-US"],
-            model="latest_long",
+        stt=deepgram.STT(
+            model="nova-3",
+            language="en-US",
         ),
         llm=google.LLM(
             model="gemini-2.5-flash",
@@ -190,7 +194,7 @@ async def entrypoint(ctx: JobContext) -> None:
         tts=cartesia.TTS(
             model="sonic-3",
             voice="87748186-691b-497d-a547-4ed1e391400f",  # Nolan — deep, commanding male voice
-            speed="normal",
+            speed=1.0,
         ),
         # Reduce glitchy cutoffs and false interruptions
         min_endpointing_delay=0.8,
@@ -211,14 +215,11 @@ async def entrypoint(ctx: JobContext) -> None:
     # Start background event monitor for urgent interrupts
     monitor_task = asyncio.create_task(monitor_events(session))
 
-    # Proactive briefing: check system status and brief the user
+    # Greet the user — no tool calls on first turn (Gemini requires a user turn before function calls)
     await session.generate_reply(
         instructions=(
-            f"You are {config['name']}. Give a brief status update. "
-            "Use get_recent_activity and list_missions to check what happened recently. "
-            "Mention: any missions completed, missions needing your approval, any failures, "
-            "and today's cost if notable. Keep it under 15 seconds of speech — just the highlights. "
-            "If nothing notable happened, just greet the user with one short sentence."
+            f"You are {config['name']}. Greet the user with one short sentence. "
+            "Do NOT call any tools yet. Just say you are online and ready."
         )
     )
 
