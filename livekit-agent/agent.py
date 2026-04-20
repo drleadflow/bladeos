@@ -7,6 +7,7 @@ Run:
   python agent.py console # Local terminal mode (no LiveKit server needed)
 """
 
+import asyncio
 import logging
 import os
 
@@ -38,23 +39,29 @@ AGENT_PERSONAS: dict[str, dict[str, str]] = {
             "an AI super agent platform that replaces entire employee teams. "
             "You are the voice interface. Confident, direct, no filler. Short sentences. "
             "\n\n"
-            "WHAT YOU CAN DO: "
-            "You manage a team of AI specialists — Nova for research, Echo for comms, "
-            "Muse for content, and Forge for ops and code. "
-            "You can assign missions to any specialist. You can search and recall memory "
-            "across all past conversations. You can trigger coding jobs — clone repos, "
-            "write code, run tests, open pull requests. You can batch-process multiple "
-            "tasks in parallel. You can search the web, read files, browse websites, "
-            "and access external tools. You track costs, security events, and routing "
-            "intelligence across the whole system. "
-            "\n\n"
-            "HOW TO BEHAVE: "
-            "When the user asks you to do something, confirm and act. Never say you "
-            "cannot do something unless it is truly impossible. If a task needs a "
-            "specialist, say which one you are dispatching to and what they will do. "
-            "You are not a chatbot. You are an autonomous agent platform with real "
-            "capabilities. Act like it. "
-            "\n\n"
+            "ROUTING — ANSWER vs DELEGATE:\n"
+            "When the user asks for information you can look up with your tools, answer directly. "
+            "This includes: ad performance, costs, team status, memory search, web search, "
+            "GitHub issues, lead data, schedules. Use the appropriate tool and speak the result.\n"
+            "When the user asks for work that requires research, creation, writing, or multi-step "
+            "execution, create a mission using create_mission and delegate to the right specialist. "
+            "Tell the user which specialist is handling it and what they will deliver. "
+            "Specialists: Nova (research), Echo (comms), Muse (content), Forge (ops/code).\n\n"
+            "VOICE OUTPUT RULES:\n"
+            "When a tool returns more than 5 items (list entries, search results, issues, etc.), "
+            "speak a brief summary — the count and top 3 highlights — then automatically use "
+            "send_to_telegram to send the full list. Say 'I have sent the full list to your Telegram.'\n"
+            "Keep all spoken responses under 30 seconds. Be concise.\n\n"
+            "MISSION MANAGEMENT:\n"
+            "You can approve, reject, or respond to missions by voice. When the user says "
+            "'approve that mission' or 'looks good', use approve_mission. When they give feedback "
+            "like 'reject it, focus on US only', use reject_mission with the reason. When an "
+            "employee is waiting for input, use respond_to_mission.\n\n"
+            "WHAT YOU CAN DO:\n"
+            "Search the web. Check GitHub issues and PRs. Pull Meta Ads performance. "
+            "Query lead data and funnel metrics. Search and save to memory. "
+            "Track costs and system activity. Manage the full mission lifecycle. "
+            "Send anything to the user's Telegram for reading.\n\n"
             "The user is Dr. Emeka Ajufo, founder and operator of Blade. "
             "Do not use emojis, asterisks, markdown, or other special characters."
         ),
@@ -121,6 +128,45 @@ def prewarm(proc: JobProcess) -> None:
 server.setup_fnc = prewarm
 
 
+async def monitor_events(session: AgentSession) -> None:
+    """Poll for urgent events every 30 seconds during active session."""
+    seen_event_ids: set[str] = set()
+    urgent_types = {
+        "mission_failed",
+        "mission_pending_review",
+        "mission_awaiting_input",
+        "escalation_triggered",
+    }
+
+    while True:
+        await asyncio.sleep(30)
+        try:
+            from tools import _api
+            result = await _api("GET", "/api/timeline?limit=5")
+            events = result.get("data", result.get("events", []))
+
+            for event in events:
+                event_id = str(event.get("id", ""))
+                if not event_id or event_id in seen_event_ids:
+                    continue
+                seen_event_ids.add(event_id)
+
+                event_type = event.get("eventType", event.get("type", ""))
+                if event_type in urgent_types:
+                    summary = event.get("summary", event.get("description", "Unknown event"))
+                    await session.generate_reply(
+                        instructions=(
+                            f"Alert the user about this urgent event: {summary}. "
+                            "Keep it to one sentence. Be direct."
+                        )
+                    )
+        except Exception as e:
+            logger.warning(f"Event monitor error: {e}")
+
+        if len(seen_event_ids) > 200:
+            seen_event_ids.clear()
+
+
 @server.rtc_session()
 async def entrypoint(ctx: JobContext) -> None:
     ctx.log_context_fields = {"room": ctx.room.name}
@@ -162,9 +208,18 @@ async def entrypoint(ctx: JobContext) -> None:
         ),
     )
 
-    # Greet the user with a short opening line
+    # Start background event monitor for urgent interrupts
+    monitor_task = asyncio.create_task(monitor_events(session))
+
+    # Proactive briefing: check system status and brief the user
     await session.generate_reply(
-        instructions=f"Greet the user briefly. You are {config['name']}. Keep it to one short sentence."
+        instructions=(
+            f"You are {config['name']}. Give a brief status update. "
+            "Use get_recent_activity and list_missions to check what happened recently. "
+            "Mention: any missions completed, missions needing your approval, any failures, "
+            "and today's cost if notable. Keep it under 15 seconds of speech — just the highlights. "
+            "If nothing notable happened, just greet the user with one short sentence."
+        )
     )
 
 

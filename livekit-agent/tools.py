@@ -399,12 +399,275 @@ async def meta_campaign_performance(
     return f"{len(data)} campaigns ({date_preset}):\n" + "\n".join(lines)
 
 
+# ── Web Search ───────────────────────────────────────────
+
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
+
+
+@function_tool(
+    name="web_search",
+    description="Search the web for current information. Use when the user asks about recent events, news, or anything that requires up-to-date data.",
+)
+async def web_search(
+    query: Annotated[str, "The search query"],
+    max_results: Annotated[int, "Number of results to return, default 5"] = 5,
+) -> str:
+    if not TAVILY_API_KEY:
+        result = await _api("GET", f"/api/search?q={query}&limit={max_results}")
+        if result.get("success"):
+            items = result.get("data", [])
+            if not items:
+                return f"No results for '{query}'."
+            lines = [f"- {r.get('title', '')}: {r.get('snippet', '')[:150]}" for r in items[:max_results]]
+            return f"{len(lines)} results for '{query}':\n" + "\n".join(lines)
+        return f"Search failed: {result.get('error', 'unknown')}"
+
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            "https://api.tavily.com/search",
+            json={"api_key": TAVILY_API_KEY, "query": query, "max_results": max_results},
+        ) as resp:
+            data = await resp.json()
+
+    results = data.get("results", [])
+    if not results:
+        return f"No results for '{query}'."
+
+    lines = []
+    for r in results[:max_results]:
+        title = r.get("title", "")
+        snippet = r.get("content", "")[:150]
+        url = r.get("url", "")
+        lines.append(f"- {title}: {snippet} ({url})")
+
+    return f"{len(lines)} results for '{query}':\n" + "\n".join(lines)
+
+
+# ── GitHub ───────────────────────────────────────────────
+
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
+
+
+async def _github_get(path: str) -> dict | list:
+    if not GITHUB_TOKEN:
+        return {"error": "GITHUB_TOKEN not configured"}
+    url = f"https://api.github.com{path}"
+    async with aiohttp.ClientSession() as session:
+        headers = {
+            "Authorization": f"Bearer {GITHUB_TOKEN}",
+            "Accept": "application/vnd.github.v3+json",
+        }
+        async with session.get(url, headers=headers) as resp:
+            try:
+                return await resp.json()
+            except Exception:
+                text = await resp.text()
+                return {"error": f"HTTP {resp.status}: {text[:200]}"}
+
+
+@function_tool(
+    name="github_list_issues",
+    description="List open issues for a GitHub repository. Use when the user asks about issues, bugs, or open tickets.",
+)
+async def github_list_issues(
+    repo: Annotated[str, "Repository in owner/repo format, e.g. 'user/blade'"],
+    state: Annotated[str, "Filter: open, closed, or all. Default: open"] = "open",
+) -> str:
+    result = await _github_get(f"/repos/{repo}/issues?state={state}&per_page=15")
+    if isinstance(result, dict) and "error" in result:
+        return f"Could not fetch issues: {result['error']}"
+
+    issues = [i for i in result if "pull_request" not in i]
+    if not issues:
+        return f"No {state} issues for {repo}."
+
+    lines = []
+    for i in issues[:15]:
+        labels = ", ".join(l["name"] for l in i.get("labels", []))
+        label_str = f" [{labels}]" if labels else ""
+        lines.append(f"- #{i['number']}: {i['title']}{label_str}")
+
+    return f"{len(issues)} {state} issues for {repo}:\n" + "\n".join(lines)
+
+
+@function_tool(
+    name="github_get_pr",
+    description="Get details about a specific pull request. Use when the user asks about a PR by number.",
+)
+async def github_get_pr(
+    repo: Annotated[str, "Repository in owner/repo format"],
+    pr_number: Annotated[int, "The PR number"],
+) -> str:
+    result = await _github_get(f"/repos/{repo}/pulls/{pr_number}")
+    if isinstance(result, dict) and "error" in result:
+        return f"Could not fetch PR: {result['error']}"
+
+    pr = result
+    state = pr.get("state", "unknown")
+    title = pr.get("title", "")
+    user = pr.get("user", {}).get("login", "unknown")
+    additions = pr.get("additions", 0)
+    deletions = pr.get("deletions", 0)
+    mergeable = pr.get("mergeable_state", "unknown")
+    body = (pr.get("body") or "")[:300]
+
+    return (
+        f"PR #{pr_number}: {title}\n"
+        f"Author: {user} | State: {state} | Mergeable: {mergeable}\n"
+        f"+{additions} -{deletions} lines\n"
+        f"Description: {body}"
+    )
+
+
+# ── GHL / Leads ──────────────────────────────────────────
+
+
+@function_tool(
+    name="ghl_lead_events",
+    description="Get recent lead activity — messages, appointments, status changes. Use when the user asks about leads or what's happening with clients.",
+)
+async def ghl_lead_events(
+    days: Annotated[int, "Number of days to look back, default 7"] = 7,
+) -> str:
+    result = await _api("GET", f"/api/leads/events?days={days}&limit=15")
+    if not result.get("success"):
+        return f"Could not fetch lead events: {result.get('error', 'unknown')}"
+
+    events = result.get("data", [])
+    if not events:
+        return f"No lead events in the last {days} days."
+
+    lines = []
+    for e in events[:15]:
+        event_type = e.get("type", "event")
+        contact = e.get("contactName", "Unknown")
+        summary = e.get("summary", "")[:100]
+        lines.append(f"- [{event_type}] {contact}: {summary}")
+
+    return f"{len(events)} lead events (last {days} days):\n" + "\n".join(lines)
+
+
+@function_tool(
+    name="ghl_funnel_analysis",
+    description="Get lead funnel analysis — how leads progress through pipeline stages. Use when the user asks about conversion rates or funnel performance.",
+)
+async def ghl_funnel_analysis(
+    days: Annotated[int, "Number of days to analyze, default 30"] = 30,
+) -> str:
+    result = await _api("GET", f"/api/leads/funnel?days={days}")
+    if not result.get("success"):
+        return f"Could not fetch funnel data: {result.get('error', 'unknown')}"
+
+    data = result.get("data", {})
+    stages = data.get("stages", [])
+    if not stages:
+        return "No funnel data available."
+
+    lines = []
+    for s in stages:
+        name = s.get("name", "Unknown")
+        count = s.get("count", 0)
+        pct = s.get("conversionRate", 0)
+        lines.append(f"- {name}: {count} leads ({pct:.1f}% conversion)")
+
+    return f"Funnel analysis (last {days} days):\n" + "\n".join(lines)
+
+
+@function_tool(
+    name="ghl_intro_response_rate",
+    description="Get intro message response rates — how many leads replied to the first outbound message. Use when the user asks about outreach effectiveness.",
+)
+async def ghl_intro_response_rate(
+    days: Annotated[int, "Number of days to look back, default 30"] = 30,
+) -> str:
+    result = await _api("GET", f"/api/leads/intro-rate?days={days}")
+    if not result.get("success"):
+        return f"Could not fetch response rates: {result.get('error', 'unknown')}"
+
+    data = result.get("data", {})
+    total = data.get("totalLeads", 0)
+    responded = data.get("responded", 0)
+    rate = data.get("responseRate", 0)
+
+    return (
+        f"Intro response rate (last {days} days):\n"
+        f"Total leads contacted: {total}\n"
+        f"Responded: {responded}\n"
+        f"Response rate: {rate:.1f}%"
+    )
+
+
+# ── Telegram Push ────────────────────────────────────────
+
+
+@function_tool(
+    name="send_to_telegram",
+    description="Send content to the user's Telegram chat. Use for long lists, code, "
+                "detailed results, or anything better read than heard. Also use when "
+                "a tool returns more than 5 items — speak a summary and send the full list here.",
+)
+async def send_to_telegram(
+    message: Annotated[str, "The content to send to Telegram"],
+) -> str:
+    result = await _api("POST", "/api/notify/telegram", {"message": message})
+    if result.get("success"):
+        return "Sent to Telegram."
+    return f"Failed to send: {result.get('error', 'unknown')}"
+
+
+# ── Mission Lifecycle ────────────────────────────────────
+
+
+@function_tool(
+    name="approve_mission",
+    description="Approve a completed mission that is pending review. Use when the user says 'approve' or 'looks good' about a mission.",
+)
+async def approve_mission(
+    mission_id: Annotated[str, "The mission ID to approve. Use list_missions with status='pending_review' to find IDs."],
+) -> str:
+    result = await _api("POST", f"/api/missions/{mission_id}/approve")
+    if result.get("success"):
+        return "Mission approved."
+    return f"Could not approve: {result.get('error', 'unknown')}"
+
+
+@function_tool(
+    name="reject_mission",
+    description="Reject a completed mission and send it back with feedback. Use when the user is not satisfied with a mission result.",
+)
+async def reject_mission(
+    mission_id: Annotated[str, "The mission ID to reject"],
+    reason: Annotated[str, "Why the mission is being rejected — what should be different"],
+) -> str:
+    result = await _api("POST", f"/api/missions/{mission_id}/reject", {"reason": reason})
+    if result.get("success"):
+        return f"Mission rejected. Reason sent: {reason}"
+    return f"Could not reject: {result.get('error', 'unknown')}"
+
+
+@function_tool(
+    name="respond_to_mission",
+    description="Answer an employee's clarification question on an active mission. Use when an employee is waiting for input and the user provides the answer.",
+)
+async def respond_to_mission(
+    mission_id: Annotated[str, "The mission ID to respond to. Use list_missions with status='awaiting_input' to find IDs."],
+    response: Annotated[str, "The answer to the employee's question"],
+) -> str:
+    result = await _api("POST", f"/api/missions/{mission_id}/respond", {"response": response})
+    if result.get("success"):
+        return "Response sent. The employee will resume work."
+    return f"Could not respond: {result.get('error', 'unknown')}"
+
+
 # ── All tools list for agent registration ─────────────────
 
 ALL_TOOLS = [
     create_mission,
     list_missions,
     get_mission_result,
+    approve_mission,
+    reject_mission,
+    respond_to_mission,
     search_memory,
     save_memory,
     get_memory_stats,
@@ -415,4 +678,11 @@ ALL_TOOLS = [
     meta_list_accounts,
     meta_account_performance,
     meta_campaign_performance,
+    web_search,
+    github_list_issues,
+    github_get_pr,
+    ghl_lead_events,
+    ghl_funnel_analysis,
+    ghl_intro_response_rate,
+    send_to_telegram,
 ]
