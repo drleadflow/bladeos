@@ -1,11 +1,30 @@
+import { useState, useCallback, useEffect } from "react";
 import { Outlet } from "@tanstack/react-router";
 import { Toaster } from "sonner";
 import { TopBar } from "./TopBar";
 import { LeftNav } from "./LeftNav";
+import { CommandBar } from "./CommandBar";
+import { ChatDrawer } from "./ChatDrawer";
 import { useBladeRealtime } from "@/hooks/use-blade-realtime";
 
 export function AppShell() {
   useBladeRealtime();
+
+  const [chatOpen, setChatOpen] = useState(false);
+  const [initialChatMessage, setInitialChatMessage] = useState<string | undefined>();
+
+  const handleExpandToDrawer = useCallback((message?: string) => {
+    setInitialChatMessage(message);
+    setChatOpen(true);
+  }, []);
+
+  // Listen for chat open events from LeftNav
+  useEffect(() => {
+    const handler = () => setChatOpen(true);
+    window.addEventListener("blade:open-chat", handler);
+    return () => window.removeEventListener("blade:open-chat", handler);
+  }, []);
+
   return (
     <div className="relative flex h-screen w-screen flex-col overflow-hidden bg-[#050508] text-[var(--blade-text)]">
       {/* Background layers */}
@@ -22,7 +41,7 @@ export function AppShell() {
       <TopBar />
       <div className="relative flex flex-1 overflow-hidden">
         <LeftNav />
-        <main className="relative flex-1 overflow-hidden">
+        <main className="relative flex-1 overflow-hidden pb-14">
           <Outlet />
         </main>
       </div>
@@ -39,6 +58,12 @@ export function AppShell() {
             fontSize: "12px",
           },
         }}
+      />
+      <CommandBar onExpandToDrawer={handleExpandToDrawer} />
+      <ChatDrawer
+        open={chatOpen}
+        onClose={() => setChatOpen(false)}
+        initialMessage={initialChatMessage}
       />
     </div>
   );

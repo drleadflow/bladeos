@@ -1,5 +1,6 @@
+import React from "react";
 import { Link, useLocation } from "@tanstack/react-router";
-import { Radar, Users, Crosshair, Brain, Clock, Rocket, Cpu, Target, AlertTriangle, BarChart3, Puzzle } from "lucide-react";
+import { Radar, Users, Crosshair, Brain, Clock, Rocket, Cpu, Target, AlertTriangle, BarChart3, Puzzle, MessageSquare } from "lucide-react";
 import { HexIcon } from "./HexIcon";
 
 const coreItems = [
@@ -26,20 +27,34 @@ export function LeftNav() {
       <div className="pointer-events-none absolute inset-y-0 right-0 w-px bg-gradient-to-b from-transparent via-[var(--blade-red)]/40 to-transparent" />
 
       <nav className="flex flex-col items-center gap-2">
-        {coreItems.map((it) => {
+        {coreItems.map((it, idx) => {
           const active = pathname === it.to;
           return (
-            <Link
-              key={it.to}
-              to={it.to}
-              className="group relative flex flex-col items-center"
-              title={it.label}
-            >
-              <HexIcon Icon={it.icon} active={active} />
-              <span className={`mt-0.5 font-mono text-[8px] uppercase tracking-wider transition-colors ${active ? "text-[var(--blade-red)]" : "text-white/30 group-hover:text-white/60"}`}>
-                {it.label.slice(0, 4)}
-              </span>
-            </Link>
+            <React.Fragment key={it.to}>
+              <Link
+                to={it.to}
+                className="group relative flex flex-col items-center"
+                title={it.label}
+              >
+                <HexIcon Icon={it.icon} active={active} />
+                <span className={`mt-0.5 font-mono text-[8px] uppercase tracking-wider transition-colors ${active ? "text-[var(--blade-red)]" : "text-white/30 group-hover:text-white/60"}`}>
+                  {it.label.slice(0, 4)}
+                </span>
+              </Link>
+              {idx === 0 && (
+                <button
+                  key="chat"
+                  className="group relative flex flex-col items-center"
+                  title="Chat"
+                  onClick={() => window.dispatchEvent(new CustomEvent("blade:open-chat"))}
+                >
+                  <HexIcon Icon={MessageSquare} active={false} />
+                  <span className="mt-0.5 font-mono text-[8px] uppercase tracking-wider transition-colors text-white/30 group-hover:text-white/60">
+                    Chat
+                  </span>
+                </button>
+              )}
+            </React.Fragment>
           );
         })}
 
